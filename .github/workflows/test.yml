@@ -18,10 +18,12 @@ jobs:
         run: npm test
       - name: Install browsers
         run: npx playwright install --with-deps chromium
-      - name: Browser tests
-        run: npm run test:e2e
+      # before the browser tests, not after: one of them loads the built file,
+      # and with nothing on disk it skips itself and reports success
       - name: Single-file build
         run: npm run build
+      - name: Browser tests
+        run: npm run test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
