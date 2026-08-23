@@ -14,14 +14,17 @@
  *   webkitdirectory       most other desktop browsers. One shot, no memory.
  *   multiple files        iOS Safari, which has neither of the above.
  */
-import { buildLibrary } from "../core/naming.js";
-import { imageListSource, decodeBlob } from "./sources.js";
+import { buildLibrary, chapterNumber, naturalCompare } from "../core/naming.js";
+import { imageListSource, slicedSource, decodeBlob } from "./sources.js";
+import { sliceChapter, probeIsStrip, toCanvas } from "./slicer.js";
 import { createGithubProvider, githubPanel } from "./github.js";
 
 export function createLibrary(els, openReader, toast) {
   let series = [];             // [{ name, chapters:[{ name, pages }] }]
   let sourceLabel = "";
   let current = null;          // the series being browsed
+  let stripMode = false;       // the folder holds uncut captures, not pages
+  const plans = new Map();     // chapter key -> page rectangles, measured once
 
   // ---------- progress ----------
   const PROGRESS_KEY = "manhwa-progress";
@@ -41,7 +44,44 @@ export function createLibrary(els, openReader, toast) {
     if (!series.length) { toast("이미지를 찾지 못했어요."); return; }
     sourceLabel = label;
     current = null;
+    plans.clear();
+
+    // One decode says which kind of folder this is, and that changes what the
+    // folders mean — so it has to be settled before anything is listed.
+    busy("확인하는 중…");
+    const first = series[0].chapters[0] && series[0].chapters[0].pages[0];
+    stripMode = first ? await probeIsStrip(first) : false;
+    if (stripMode) series = regroupAsStrips(series);
     render();
+  }
+
+  /**
+   * Re-read the folders on the understanding that the images are captures.
+   *
+   * A page belongs to a chapter, but a capture IS a chapter — so a folder
+   * holding several captures is not a chapter, it is a series, and every level
+   * shifts up by one. A folder holding a single capture is left alone: there the
+   * folder name is the chapter's name and says more than the file's does.
+   */
+  function regroupAsStrips(list) {
+    const out = [];
+    for (const s of list) {
+      const keep = [];
+      for (const c of s.chapters) {
+        if (c.pages.length <= 1) { keep.push(c); continue; }
+        out.push({
+          name: c.name,
+          chapters: c.pages
+            .map((page) => {
+              const name = page.name.replace(/\.[^.]+$/, "");
+              return { name, number: chapterNumber(name), pages: [page] };
+            })
+            .sort((a, b) => naturalCompare(a.name, b.name))
+        });
+      }
+      if (keep.length) out.push({ name: s.name, chapters: keep });
+    }
+    return out.sort((a, b) => naturalCompare(a.name, b.name));
   }
 
   /** Walk a File System Access directory handle into flat entries. */
@@ -68,7 +108,7 @@ export function createLibrary(els, openReader, toast) {
       try { handle = await window.showDirectoryPicker({ id: "manhwa", mode: "read" }); }
       catch (e) { return; }                       // the user backed out
       await rememberHandle(handle);
-      els.libStatus.textContent = "폴더를 읽는 중…";
+      busy("폴더를 읽는 중…");
       await adopt(await walkDir(handle), handle.name);
       return;
     }
@@ -139,20 +179,20 @@ export function createLibrary(els, openReader, toast) {
     let ok = await handle.queryPermission({ mode: "read" });
     if (ok !== "granted") ok = await handle.requestPermission({ mode: "read" });
     if (ok !== "granted") { toast("폴더 접근 권한이 필요해요."); return; }
-    els.libStatus.textContent = "폴더를 읽는 중…";
+    busy("폴더를 읽는 중…");
     await adopt(await walkDir(handle), handle.name);
   });
 
   // ---------- GitHub ----------
   githubPanel(els, toast, async (provider) => {
-    els.libStatus.textContent = "저장소를 읽는 중…";
+    busy("저장소를 읽는 중…");
     try { await adopt(await provider.entries(), provider.label); }
-    catch (err) { els.libStatus.textContent = ""; toast(err.message || "저장소를 읽지 못했어요."); }
+    catch (err) { busy(null); toast(err.message || "저장소를 읽지 못했어요."); }
   });
 
   // ---------- browsing ----------
   function render() {
-    els.libStatus.textContent = "";
+    busy(null);
     els.libEmpty.hidden = series.length > 0;
     els.libBody.hidden = series.length === 0;
     if (!series.length) return;
@@ -199,12 +239,19 @@ export function createLibrary(els, openReader, toast) {
     current.chapters.forEach((c, i) => {
       const row = document.createElement("button");
       row.className = "chapter-row" + (p && p.chapter === c.name ? " reading" : "");
-      row.innerHTML =
-        '<span class="ch-name"></span>'
-        + '<span class="ch-pages mono">' + c.pages.length + "쪽</span>";
+      // a capture's page count is unknown until it has been measured, so say
+      // what will happen instead of stating a number that is really a file count
+      const known = plans.get(current.name + "/" + c.name);
+      const note = stripMode
+        ? (known ? known.length + "쪽" : "자동 분할")
+        : c.pages.length + "쪽";
+      row.innerHTML = '<span class="ch-name"></span><span class="ch-pages mono">' + note + "</span>";
       row.querySelector(".ch-name").textContent =
         c.number != null ? c.name : c.name + " (번호 없음)";
-      row.addEventListener("click", () => read(i, p && p.chapter === c.name ? p.page : 0));
+      row.addEventListener("click", () => {
+        read(i, p && p.chapter === c.name ? p.page : 0)
+          .catch((err) => { busy(null); toast("이 화를 열지 못했어요."); console.error(err); });
+      });
       els.chapterList.appendChild(row);
     });
   }
@@ -212,27 +259,62 @@ export function createLibrary(els, openReader, toast) {
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+  // ---------- uncut captures ----------
+  /** Rectangles for a chapter's pages, measured once and kept for the session. */
+  async function planFor(seriesObj, c) {
+    const key = seriesObj.name + "/" + c.name;
+    if (plans.has(key)) return plans.get(key);
+    const total = c.pages.length;
+    busy(total > 1 ? "페이지를 찾는 중… (0/" + total + ")" : "페이지를 찾는 중…");
+    const pages = await sliceChapter(c.pages, (done, n) => {
+      if (n > 1) busy("페이지를 찾는 중… (" + done + "/" + n + ")");
+    });
+    busy(null);
+    plans.set(key, pages);
+    return pages;
+  }
+
+  function busy(msg) {
+    els.libStatus.innerHTML = "";
+    els.libStatus.hidden = !msg;
+    if (!msg) return;
+    const dot = document.createElement("span");
+    dot.className = "spinner";
+    const text = document.createElement("span");
+    text.textContent = msg;
+    els.libStatus.append(dot, text);
+  }
+
   // ---------- reading ----------
   /** Build a source for chapter `i`, wired to roll into its neighbours. */
-  function chapterSource(seriesObj, i) {
+  async function chapterSource(seriesObj, i) {
     const c = seriesObj.chapters[i];
     if (!c) return null;
-    const src = imageListSource({
-      id: "lib:" + seriesObj.name + "/" + c.name,
-      title: c.name,
-      items: c.pages,
-      decode: async (item) => decodeBlob(await item.load()),
-      nextChapter: i + 1 < seriesObj.chapters.length
-        ? async () => chapterSource(seriesObj, i + 1) : null,
-      prevChapter: i > 0 ? async () => chapterSource(seriesObj, i - 1) : null
-    });
+    const id = "lib:" + seriesObj.name + "/" + c.name;
+    const next = i + 1 < seriesObj.chapters.length
+      ? () => chapterSource(seriesObj, i + 1) : null;
+    const prev = i > 0 ? () => chapterSource(seriesObj, i - 1) : null;
+
+    const src = stripMode
+      ? slicedSource({
+          id, title: c.name,
+          pages: await planFor(seriesObj, c),
+          load: async (fileIndex) => toCanvas(await decodeBlob(await c.pages[fileIndex].load())),
+          nextChapter: next, prevChapter: prev
+        })
+      : imageListSource({
+          id, title: c.name,
+          items: c.pages,
+          decode: async (item) => decodeBlob(await item.load()),
+          nextChapter: next, prevChapter: prev
+        });
     src.seriesName = seriesObj.name;
     return src;
   }
 
-  function read(i, startPage) {
-    const src = chapterSource(current, i);
-    if (!src) return;
+  async function read(i, startPage) {
+    const src = await chapterSource(current, i);
+    if (!src || !src.count) { busy(null); toast("이 화에서 페이지를 찾지 못했어요."); return; }
     openReader(src, startPage || 0);
   }
 

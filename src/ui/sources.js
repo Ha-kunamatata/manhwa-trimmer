@@ -92,6 +92,58 @@ export function imageListSource({ id, title, items, decode, nextChapter, prevCha
   };
 }
 
+/**
+ * A chapter whose pages were cut out of long captures.
+ *
+ * `pages` are rectangles that each name the file they came from, so many pages
+ * share one decoded image. That is the opposite of the case above and needs the
+ * opposite caching: a capture is enormous — a 900 x 20000 strip is 72MB once
+ * decoded — so only a couple of them may be held, and they are held by FILE
+ * rather than by page. Reading forwards touches one file for dozens of pages in
+ * a row, which is what makes so small a cache workable.
+ */
+export function slicedSource({ id, title, pages, load, nextChapter, prevChapter }) {
+  const KEEP = 2;
+  const open = new Map();            // fileIndex -> Promise<drawable>
+  const used = [];                   // fileIndex, most recently wanted last
+
+  function file(i) {
+    let entry = open.get(i);
+    if (!entry) {
+      entry = load(i).catch((err) => { if (open.get(i) === entry) open.delete(i); throw err; });
+      open.set(i, entry);
+    }
+    const at = used.indexOf(i);
+    if (at >= 0) used.splice(at, 1);
+    used.push(i);
+    while (used.length > KEEP) {
+      const gone = used.shift();
+      const dead = open.get(gone);
+      open.delete(gone);
+      Promise.resolve(dead).then((v) => { if (v && v.close) v.close(); }, () => {});
+    }
+    return entry;
+  }
+
+  return {
+    id, title,
+    count: pages.length,
+    async getPage(i) {
+      const p = pages[i];
+      if (!p) return null;
+      const img = await file(p.file);
+      return { img, sx: p.sx, sy: p.sy, sw: p.sw, sh: p.sh };
+    },
+    release() {
+      for (const entry of open.values())
+        Promise.resolve(entry).then((v) => { if (v && v.close) v.close(); }, () => {});
+      open.clear();
+      used.length = 0;
+    },
+    nextChapter, prevChapter
+  };
+}
+
 /** Decode a Blob/File into something drawable, with a path for older Safari. */
 export function decodeBlob(blob) {
   if (typeof createImageBitmap === "function") {

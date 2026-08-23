@@ -7,10 +7,8 @@
  * (see ./sources.js) and steps back.
  */
 import { analyseStrip } from "../core/analysis.js";
-import {
-  detectColumns, detectRows, buildBandMap, findBlankBands,
-  autoFit, computePages, clamp
-} from "../core/geometry.js";
+import { findBlankBands, clamp } from "../core/geometry.js";
+import { detectBox, boxFrom, planPages } from "../core/layout.js";
 import { buildPdf } from "../core/pdf.js";
 import { stripSource } from "./sources.js";
 
@@ -187,18 +185,11 @@ export function initEditor(openReader, toast) {
   }
 
   function autoDetect() {
-    const cols = detectColumns({
-      colInk: state.colInk, colStep: state.colStep,
-      grayRows: state.grayRows, width: state.natW
-    });
-    state.autoL = cols.cropLeft;
-    state.autoR = cols.cropRight;
-    const rows = detectRows({
-      variance: state.variance, saturation: state.saturation,
-      height: state.natH
-    });
-    state.autoT = rows.top;
-    state.autoB = rows.bottom;
+    const bx = detectBox(state, state.natW, state.natH);
+    state.autoL = bx.left;
+    state.autoR = state.natW - bx.right;
+    state.autoT = bx.top;
+    state.autoB = state.natH - bx.bottom;
   }
 
   els.redetectBtn.addEventListener("click", () => {
@@ -211,12 +202,8 @@ export function initEditor(openReader, toast) {
 
   // ---------- the layout guide ----------
   function box() {
-    const w = state.natW, h = state.natH;
-    const l = clamp(num(els.cropLeft), 0, w - 10);
-    const r = clamp(num(els.cropRight), 0, w - l - 10);
-    const t = clamp(num(els.cropTop), 0, h - 10);
-    const b = clamp(num(els.cropBottom), 0, h - t - 10);
-    return { left: l, right: w - r, top: t, bottom: h - b, width: w - l - r, height: h - t - b };
+    return boxFrom(num(els.cropLeft), num(els.cropRight),
+                   num(els.cropTop), num(els.cropBottom), state.natW, state.natH);
   }
   function ratio() {
     return els.ratioSel.value === "custom"
@@ -228,38 +215,28 @@ export function initEditor(openReader, toast) {
     if (!state.brightness) return;
     const bx = box();
     const offset = num(els.startOffset);
-    const span = bx.height - offset;
     const auto = els.ratioSel.value === "auto";
 
-    state.bands = buildBandMap(
-      { brightness: state.brightness, variance: state.variance, height: state.natH }, bx);
-    let fit = null;
-    if (auto) {
-      fit = autoFit(bx, offset, state.bands, state.natH);
-      state.autoFit = fit;
-    }
-    const pageH = fit ? fit.height : bx.width * ratio();
-
-    let n = state.userPageCount || (fit ? fit.n : Math.max(1, Math.round(span / pageH)));
-    n = clamp(n, 1, 500);
-    els.pageCount.value = n;
-
-    const built = computePages({
-      bx, offset,
-      pageHeight: pageH,
-      pageCount: n,
-      bands: state.bands,
-      height: state.natH,
+    // the same plan the reader makes for an uncut capture — see core/layout.js
+    const plan = planPages(state, bx, state.natH, {
+      offset,
+      ratio: auto ? null : ratio(),
+      pageCount: state.userPageCount,
       manualAdds: state.manualAdds,
       manualRemoves: state.manualRemoves
     });
+    state.bands = plan.bands;
+    state.autoFit = plan.fit;
+    const pageH = plan.pageHeight;
+    const n = plan.pageCount;
+    els.pageCount.value = n;
 
     state.blankBands = findBlankBands(
       { brightness: state.brightness, variance: state.variance }, bx);
-    state.cuts = built.cuts;
-    state.pages = built.pages;
+    state.cuts = plan.cuts;
+    state.pages = plan.pages;
 
-    els.targetVal.textContent = fmtInt(built.actualH) + "px";
+    els.targetVal.textContent = fmtInt(plan.actualH) + "px";
     if (auto && state.autoFit) {
       const f = state.autoFit;
       const layout = f.across === 2 ? "두 페이지 펼침" : "한 페이지";

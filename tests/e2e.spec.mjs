@@ -62,8 +62,40 @@ function buildLibraryTree() {
   return { root, series: 2, chapters: 2, pages: 3 };
 }
 
+/**
+ * A folder of comics that have NOT been cut yet: one long capture per chapter,
+ * site chrome and all — which is what comes off a screen recording session, and
+ * what the viewer has to slice on its own.
+ */
+function buildUncutTree() {
+  const root = join(FIXTURES, "uncut");
+  const PAGES = 5, PAGE_H = 700, GUT = 40, TOP = 150, BOT = 120;
+  const W = 700, COL_L = 90, COL_R = 610;
+  const H = TOP + PAGES * PAGE_H + (PAGES - 1) * GUT + BOT;
+  for (const ch of ["001화", "002화"]) {
+    mkdirSync(join(root, "슬램덩크"), { recursive: true });
+    writeFileSync(join(root, "슬램덩크", ch + ".png"), makePng(W, H, ({ rect }) => {
+      rect(0, 0, W, 30, [28, 28, 32]);                          // site header
+      for (let i = 0; i < 5; i++)                               // colour ad banner
+        rect(i * W / 5, 40, (i + 1) * W / 5, TOP - 20, [210, 70 + i * 22, 100]);
+      let y = TOP;
+      for (let p = 0; p < PAGES; p++) {
+        const panelH = Math.floor(PAGE_H / 4);
+        for (let k = 0; k < 4; k++) {
+          const v = 45 + ((p * 23 + k * 31) % 140);
+          rect(COL_L + 6, y + k * panelH + 6, COL_R - 6, y + (k + 1) * panelH - 2, [v, v, v]);
+        }
+        y += PAGE_H + GUT;
+      }
+      rect(0, H - 26, W, H, [28, 28, 32]);                      // footer
+    }));
+  }
+  return { root, chapters: 2, pages: PAGES };
+}
+
 const strip = buildStrip();
 const lib = buildLibraryTree();
+const uncut = buildUncutTree();
 
 async function load(page) {
   const errors = [];
@@ -238,6 +270,39 @@ test("reading a chapter runs on into the next one", async ({ page }) => {
   await expect(page.locator(".chapter-row.reading .ch-name")).toHaveText("002화");
   await page.click(".crumb-back");
   await expect(page.locator(".series-card", { hasText: "원피스" })).toContainText("이어보기");
+  expect(errors).toEqual([]);
+});
+
+test("an uncut capture is sliced into pages by the viewer", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+  await page.goto("/index.html#/library");
+  await page.setInputFiles("#folderInput", uncut.root);
+  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
+
+  // one capture per chapter, so each file is its own chapter
+  await page.locator(".series-card", { hasText: "슬램덩크" }).click();
+  await expect(page.locator("#chapterList .chapter-row")).toHaveCount(uncut.chapters);
+  await expect(page.locator(".chapter-row .ch-name").first()).toHaveText("001화");
+
+  await page.locator(".chapter-row").first().click();
+  await expect(page.locator("#reader")).toBeVisible({ timeout: 30_000 });
+  await forceSingle(page);
+  // the capture held five pages; the viewer found them without being told
+  await expect(page.locator("#rCount")).toHaveText(`1 / ${uncut.pages}`, { timeout: 30_000 });
+
+  // and the site chrome is gone: a sliced page is about a page's shape, not a
+  // strip's, which is the whole point of running the trimmer's judgement here
+  const shape = await page.evaluate(() => {
+    const c = document.querySelector("#rCanvas");
+    return c.height / c.width;
+  });
+  expect(shape).toBeGreaterThan(1.0);
+  expect(shape).toBeLessThan(2.0);
+
+  await page.click("#rZoneL");
+  await expect(page.locator("#rCount")).toHaveText(`2 / ${uncut.pages}`);
   expect(errors).toEqual([]);
 });
 

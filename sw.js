@@ -1,5 +1,5 @@
 /* Offline shell for the installed app. Bump CACHE when assets change. */
-const CACHE = "manhwa-trimmer-v2";
+const CACHE = "manhwa-trimmer-v3";
 const ASSETS = [
   "./",
   "./index.html",
@@ -11,9 +11,11 @@ const ASSETS = [
   "./src/ui/reader.js",
   "./src/ui/library.js",
   "./src/ui/sources.js",
+  "./src/ui/slicer.js",
   "./src/ui/github.js",
   "./src/core/analysis.js",
   "./src/core/geometry.js",
+  "./src/core/layout.js",
   "./src/core/naming.js",
   "./src/core/pdf.js",
   "./icons/icon-192.png",
