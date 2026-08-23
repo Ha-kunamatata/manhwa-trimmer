@@ -1,0 +1,17 @@
+{
+  "name": "manhwa-trimmer",
+  "version": "1.0.0",
+  "description": "길게 캡처한 만화 이미지를 만화책 판형 기준으로 페이지 단위로 잘라 읽고 저장하는 도구",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "python3 -m http.server 8080",
+    "build": "node scripts/build-artifact.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "playwright test",
+    "test:all": "npm run test && npm run test:e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  }
+}
