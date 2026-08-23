@@ -35,6 +35,11 @@
 
   <!-- ================= 처음 화면 ================= -->
   <section id="homeView">
+    <button class="card resume-card" id="resumeCard" hidden>
+      <span class="resume-tag">이어서 읽기</span>
+      <span class="resume-where" id="resumeWhere"></span>
+      <span class="resume-page mono" id="resumePage"></span>
+    </button>
     <div class="mode-grid">
       <button class="card mode-card" id="goEdit">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -261,34 +266,67 @@
 
 <!-- ================= 읽기 ================= -->
 <div class="reader" id="reader" hidden>
-  <div class="reader-bar">
-    <button class="rbtn" id="rClose">✕ 닫기</button>
+  <div class="reader-bar" id="rTopBar">
+    <button class="rbtn" id="rClose" title="닫기 (Esc)">✕</button>
     <span class="reader-count mono" id="rCount">1 / 1</span>
     <span class="reader-title" id="rTitle"></span>
     <span class="reader-sub" id="rSub"></span>
     <span class="spacer"></span>
-    <button class="rbtn" id="rSpread" title="한 쪽 / 두 쪽 보기">한 쪽</button>
-    <button class="rbtn" id="rCover" title="첫 장을 단독 표지로" hidden>표지 단독</button>
-    <button class="rbtn" id="rDir" title="읽는 방향">오른쪽 → 왼쪽</button>
-    <button class="rbtn" id="rFit" aria-pressed="true" title="화면에 맞추기">화면 맞춤</button>
-    <button class="rbtn" id="rAnim" aria-pressed="true" title="책 넘기는 모션">넘김 켜짐</button>
+    <button class="rbtn icon" id="rPin" title="이 페이지 핀 (P)" aria-pressed="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-6-4.5L6 21z"/></svg>
+    </button>
+    <button class="rbtn" id="rPinList" title="핀 목록 (B)">핀 <span class="badge mono" id="rPinCount">0</span></button>
+    <button class="rbtn" id="rThumbBtn" title="페이지 목록 (T)">목차</button>
+    <button class="rbtn" id="rSettings" title="보기 설정" aria-expanded="false">설정</button>
+    <button class="rbtn" id="rFull" title="전체화면 (F)">전체화면</button>
   </div>
+
   <div class="reader-stage" id="rStage">
-    <div class="reader-zone l" id="rZoneL"></div>
-    <div class="reader-zone r" id="rZoneR"></div>
-    <div class="book" id="rBook">
-      <canvas id="rCanvas"></canvas>
-      <canvas class="flip-hold" id="rFlipHold" hidden></canvas>
-      <div class="flip" id="rFlip" hidden>
-        <canvas class="flip-face front" id="rFlipFront"></canvas>
-        <canvas class="flip-face back" id="rFlipBack"></canvas>
-      </div>
-    </div>
+    <div class="book" id="rBook"><canvas id="rCanvas"></canvas></div>
+    <div class="reader-scroll" id="rScroll" hidden></div>
     <div class="reader-busy" id="rBusy" hidden><span class="spinner"></span></div>
     <div class="reader-hint" id="rHint"></div>
   </div>
+
+  <div class="reader-foot" id="rFoot">
+    <span class="mono foot-label" id="rFootFrom">1</span>
+    <input type="range" id="rSlider" min="0" max="0" value="0" aria-label="페이지 이동">
+    <span class="mono foot-label" id="rFootTo">1</span>
+  </div>
   <div class="reader-progress"><i id="rBar" style="width:0%"></i></div>
+
+  <div class="rpanel" id="rSettingsPanel" hidden>
+    <div class="rrow"><span>보기</span>
+      <div class="rseg">
+        <button class="rbtn" id="rSpread">한 쪽</button>
+        <button class="rbtn" id="rCover" hidden>표지 단독</button>
+      </div>
+    </div>
+    <div class="rrow"><span>읽는 방향</span><button class="rbtn" id="rDir">오른쪽 → 왼쪽</button></div>
+    <div class="rrow"><span>맞춤</span><button class="rbtn" id="rFit" aria-pressed="true">화면 맞춤</button></div>
+    <div class="rrow"><span>넘기는 모션</span><button class="rbtn" id="rAnim" aria-pressed="true">넘김 켜짐</button></div>
+    <div class="rrow"><span>읽기 방식</span><button class="rbtn" id="rMode">책장 넘기기</button></div>
+    <p class="rnote">가운데를 누르면 화면이 깔끔해져요 · 좌우로 끌면 종이처럼 넘어갑니다</p>
+  </div>
+
+  <div class="rdrawer" id="rThumbs" hidden>
+    <div class="rdrawer-head">
+      <strong>페이지</strong>
+      <button class="rbtn" id="rThumbClose">닫기</button>
+    </div>
+    <div class="thumb-grid" id="rThumbGrid"></div>
+  </div>
+
+  <div class="rdrawer" id="rPinPanel" hidden>
+    <div class="rdrawer-head">
+      <strong>핀한 페이지</strong>
+      <button class="rbtn" id="rPinClose">닫기</button>
+    </div>
+    <div class="pin-list" id="rPinList2"></div>
+    <p class="rnote" id="rPinEmpty" hidden>아직 핀한 페이지가 없어요. 읽다가 위쪽 깃발을 누르면 여기 모입니다.</p>
+  </div>
 </div>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

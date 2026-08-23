@@ -323,11 +323,56 @@ export function createLibrary(els, openReader, toast) {
     if (src && src.seriesName) noteProgress(src.seriesName, src.title, page, src.count);
   }
 
+  /**
+   * The most recently read thing, for the home screen.
+   *
+   * Progress is kept per series rather than as one "last read" value, so the
+   * newest entry has to be found rather than looked up — which is the right
+   * trade: reading two series in parallel is normal, and each keeps its own place.
+   */
+  function lastRead() {
+    let best = null;
+    for (const [name, p] of Object.entries(allProgress())) {
+      if (!best || (p.at || 0) > (best.at || 0)) best = { series: name, ...p };
+    }
+    return best;
+  }
+
+  /**
+   * Pick up where reading stopped.
+   *
+   * If nothing is loaded, the folder is re-opened first — but only where the
+   * browser kept permission for it. Everywhere else this can do no more than
+   * take the reader to the picker, because the files are simply not reachable
+   * without asking again.
+   */
+  async function resume() {
+    const last = lastRead();
+    if (!last) return false;
+    if (!series.length) {
+      const handle = await storedHandle();
+      if (!handle) return false;
+      let ok = await handle.queryPermission({ mode: "read" });
+      if (ok !== "granted") ok = await handle.requestPermission({ mode: "read" });
+      if (ok !== "granted") return false;
+      busy("폴더를 읽는 중…");
+      await adopt(await walkDir(handle), handle.name);
+    }
+    const s = series.find((x) => x.name === last.series);
+    if (!s) return false;
+    current = s;
+    render();
+    const i = s.chapters.findIndex((c) => c.name === last.chapter);
+    if (i < 0) return false;
+    await read(i, last.page || 0);
+    return true;
+  }
+
   (async () => {
     const handle = await storedHandle();
     if (handle) showResume(handle.name);
     els.pickFolderBtn.textContent = hasFSA ? "폴더 선택" : "폴더 선택 (하위 폴더 포함)";
   })();
 
-  return { onProgress, refresh: render };
+  return { onProgress, refresh: render, lastRead, resume };
 }

@@ -107,10 +107,34 @@ async function load(page) {
   return errors;
 }
 
+/**
+ * Tap one edge of the page to turn it.
+ *
+ * The reader has no hit-area elements any more — a tap, a drag-turn and a pinch
+ * all come off the same pointer stream on the stage — so tests aim at a point
+ * the way a reader's thumb does.
+ */
+async function tapEdge(page, side) {
+  const box = await page.locator("#rStage").boundingBox();
+  const x = side === "left" ? box.x + box.width * 0.12 : box.x + box.width * 0.88;
+  await page.mouse.click(x, box.y + box.height / 2);
+}
+const turnOn = (page) => tapEdge(page, "left");    // right-to-left: left advances
+const turnBack = (page) => tapEdge(page, "right");
+
+/** The view controls live behind the settings button now. */
+async function openSettings(page) {
+  if (await page.locator("#rSettingsPanel").isHidden()) await page.click("#rSettings");
+  await expect(page.locator("#rSettingsPanel")).toBeVisible();
+}
+
 /** A wide window opens on a spread; pin it to one leaf so page counts are exact. */
 async function forceSingle(page) {
+  await openSettings(page);
   if ((await page.textContent("#rSpread")).trim() === "두 쪽") await page.click("#rSpread");
   await expect(page.locator("#rSpread")).toHaveText("한 쪽");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#rSettingsPanel")).toBeHidden();
 }
 
 async function loadLibrary(page) {
@@ -151,9 +175,9 @@ test("reader opens, turns pages and closes", async ({ page }) => {
   await expect(page.locator("#rCount")).toContainText(`/ ${strip.pages}`);
 
   const first = await page.textContent("#rCount");
-  await page.click("#rZoneL");                        // right-to-left: left advances
+  await turnOn(page);
   await expect(page.locator("#rCount")).not.toHaveText(first);
-  await page.click("#rZoneR");
+  await turnBack(page);
   await expect(page.locator("#rCount")).toHaveText(first);
 
   await page.keyboard.press("End");
@@ -165,10 +189,11 @@ test("reader opens, turns pages and closes", async ({ page }) => {
 test("two-page spread pairs the leaves", async ({ page }) => {
   await load(page);
   await page.click("#readBtn");
-  const mode = await page.textContent("#rSpread");
-  if (mode.trim() === "한 쪽") await page.click("#rSpread");
+  await openSettings(page);
+  if ((await page.textContent("#rSpread")).trim() === "한 쪽") await page.click("#rSpread");
   await expect(page.locator("#rSpread")).toHaveText("두 쪽");
   await expect(page.locator("#rCover")).toBeVisible();
+  await page.keyboard.press("Escape");
 
   await expect(page.locator("#rCount")).toContainText("1 /");   // cover stands alone
   // compare shape, not pixel width: on a narrow screen both fit to the same
@@ -178,7 +203,7 @@ test("two-page spread pairs the leaves", async ({ page }) => {
     return c.width / c.height;
   });
   const single = await aspect();
-  await page.click("#rZoneL");
+  await turnOn(page);
   await expect(page.locator("#rCount")).toContainText("–");     // now a pair
   const pair = await aspect();
   expect(pair).toBeGreaterThan(single * 1.7);
@@ -258,7 +283,7 @@ test("reading a chapter runs on into the next one", async ({ page }) => {
   await expect(page.locator("#rCount")).toContainText(`/ ${lib.pages}`);
 
   // step off the end of chapter one and land at the start of chapter two
-  for (let i = 0; i < lib.pages; i++) await page.click("#rZoneL");
+  for (let i = 0; i < lib.pages; i++) await turnOn(page);
   await expect(page.locator("#rSub")).toHaveText("002화");
   await expect(page.locator("#rCount")).toContainText(`1 / ${lib.pages}`);
 
@@ -301,7 +326,7 @@ test("an uncut capture is sliced into pages by the viewer", async ({ page }) => 
   expect(shape).toBeGreaterThan(1.0);
   expect(shape).toBeLessThan(2.0);
 
-  await page.click("#rZoneL");
+  await turnOn(page);
   await expect(page.locator("#rCount")).toHaveText(`2 / ${uncut.pages}`);
   expect(errors).toEqual([]);
 });
@@ -327,9 +352,158 @@ test("the page turn leaves the right page on screen", async ({ page }) => {
   await forceSingle(page);
   await expect(page.locator("#rCount")).toHaveText(`1 / ${lib.pages}`);
 
-  await page.click("#rZoneL");
+  await turnOn(page);
   await expect(page.locator("#rCount")).toHaveText(`2 / ${lib.pages}`);
   // the turning sheet must be gone once it has landed
   await expect(page.locator("#rFlip")).toBeHidden();
   await expect(page.locator("#rCanvas")).toBeVisible();
+});
+
+// ---------- the reader's own features ----------
+
+/** Open a chapter of the plain page library, pinned to one leaf. */
+async function openChapter(page) {
+  const errors = await loadLibrary(page);
+  await page.locator(".series-card", { hasText: "원피스" }).click();
+  await page.locator(".chapter-row").first().click();
+  await expect(page.locator("#reader")).toBeVisible();
+  await forceSingle(page);
+  return errors;
+}
+
+test("a page can be pinned, found in the list and jumped back to", async ({ page }) => {
+  const errors = await openChapter(page);
+  await turnOn(page);
+  await expect(page.locator("#rCount")).toHaveText(`2 / ${lib.pages}`);
+
+  await page.click("#rPin");
+  await expect(page.locator("#rPin")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#rPinCount")).toHaveText("1");
+
+  // leave the page, then come back to it through the list
+  await turnOn(page);
+  await expect(page.locator("#rCount")).toHaveText(`3 / ${lib.pages}`);
+  await page.click("#rPinList");
+  await expect(page.locator("#rPinPanel")).toBeVisible();
+  await page.locator("#rPinList2 .pin-row .where").first().click();
+  await expect(page.locator("#rCount")).toHaveText(`2 / ${lib.pages}`);
+  await expect(page.locator("#rPin")).toHaveAttribute("aria-pressed", "true");
+
+  // and it comes off again
+  await page.click("#rPin");
+  await expect(page.locator("#rPinCount")).toHaveText("0");
+  expect(errors).toEqual([]);
+});
+
+test("pins survive closing the reader", async ({ page }) => {
+  await openChapter(page);
+  await page.click("#rPin");
+  await expect(page.locator("#rPinCount")).toHaveText("1");
+  await page.keyboard.press("Escape");
+  await page.locator(".chapter-row").first().click();
+  await expect(page.locator("#reader")).toBeVisible();
+  await expect(page.locator("#rPinCount")).toHaveText("1");
+});
+
+test("the page list jumps straight to a page", async ({ page }) => {
+  const errors = await openChapter(page);
+  await page.click("#rThumbBtn");
+  await expect(page.locator("#rThumbs")).toBeVisible();
+  await expect(page.locator("#rThumbGrid .thumb")).toHaveCount(lib.pages);
+  await page.locator("#rThumbGrid .thumb").nth(2).click();
+  await expect(page.locator("#rThumbs")).toBeHidden();
+  await expect(page.locator("#rCount")).toHaveText(`3 / ${lib.pages}`);
+  expect(errors).toEqual([]);
+});
+
+test("the slider moves through the chapter", async ({ page }) => {
+  await openChapter(page);
+  await expect(page.locator("#rSlider")).toHaveAttribute("max", String(lib.pages - 1));
+  await page.locator("#rSlider").fill(String(lib.pages - 1));
+  await page.locator("#rSlider").dispatchEvent("change");
+  await expect(page.locator("#rCount")).toHaveText(`${lib.pages} / ${lib.pages}`);
+});
+
+test("tapping the middle clears the chrome away, and brings it back", async ({ page }) => {
+  await openChapter(page);
+  const box = await page.locator("#rStage").boundingBox();
+  const middle = () => page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+  await middle();
+  await expect(page.locator("#reader")).toHaveClass(/immersive/);
+  await middle();
+  await expect(page.locator("#reader")).not.toHaveClass(/immersive/);
+  // the page did not move while the chrome was being toggled
+  await expect(page.locator("#rCount")).toHaveText(`1 / ${lib.pages}`);
+});
+
+test("dragging turns the page like paper", async ({ page }) => {
+  await openChapter(page);
+  const box = await page.locator("#rStage").boundingBox();
+  const y = box.y + box.height / 2;
+
+  // right-to-left: dragging leftwards carries the sheet forward
+  await page.mouse.move(box.x + box.width * 0.75, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.5, y, { steps: 8 });
+  await page.mouse.move(box.x + box.width * 0.12, y, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator("#rCount")).toHaveText(`2 / ${lib.pages}`);
+
+  // a drag that barely moves falls back to where it started
+  await page.mouse.move(box.x + box.width * 0.75, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.70, y, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.locator("#rCount")).toHaveText(`2 / ${lib.pages}`);
+});
+
+test("double click zooms in, and again zooms back out", async ({ page }) => {
+  await openChapter(page);
+  const scale = () => page.evaluate(() => {
+    const t = getComputedStyle(document.querySelector("#rBook")).transform;
+    return t === "none" ? 1 : new DOMMatrix(t).a;
+  });
+  expect(await scale()).toBeCloseTo(1, 1);
+  const box = await page.locator("#rStage").boundingBox();
+  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+  expect(await scale()).toBeGreaterThan(2);
+  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+  expect(await scale()).toBeCloseTo(1, 1);
+});
+
+test("the home screen offers to pick up where reading stopped", async ({ page }) => {
+  await openChapter(page);
+  await turnOn(page);
+  await expect(page.locator("#rCount")).toHaveText(`2 / ${lib.pages}`);
+  await page.keyboard.press("Escape");
+
+  await page.click("#backHome");
+  await expect(page.locator("#resumeCard")).toBeVisible();
+  await expect(page.locator("#resumeWhere")).toHaveText("원피스 · 001화");
+  await expect(page.locator("#resumePage")).toContainText("2");
+});
+
+test("continuous scrolling stacks the pages down the screen", async ({ page }) => {
+  const errors = await openChapter(page);
+  await openSettings(page);
+  await page.click("#rMode");
+  await expect(page.locator("#rMode")).toHaveText("이어서 스크롤");
+  await page.keyboard.press("Escape");
+
+  await expect(page.locator("#rScroll")).toBeVisible();
+  await expect(page.locator("#rBook")).toBeHidden();
+  await expect(page.locator("#rScroll .scroll-slot")).toHaveCount(lib.pages);
+
+  // scrolling down moves the page counter with it
+  await page.locator("#rScroll").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator("#rCount")).toHaveText(`${lib.pages} / ${lib.pages}`);
+
+  // and the mode is remembered on the way back to paging
+  await openSettings(page);
+  await page.click("#rMode");
+  await expect(page.locator("#rMode")).toHaveText("책장 넘기기");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#rBook")).toBeVisible();
+  expect(errors).toEqual([]);
 });

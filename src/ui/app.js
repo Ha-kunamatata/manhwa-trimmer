@@ -39,8 +39,37 @@ export function initApp() {
     window.scrollTo(0, 0);
   }
 
+  /**
+   * Offer to pick up where reading stopped.
+   *
+   * Shown on the home screen rather than buried in the library, because coming
+   * back to a comic mid-chapter is the single most common reason to open this at
+   * all — and the alternative is three taps through folders every time.
+   */
+  function showResume() {
+    const card = $("#resumeCard");
+    const last = library && library.lastRead();
+    card.hidden = !last;
+    if (!last) return;
+    $("#resumeWhere").textContent = last.series + " · " + last.chapter;
+    $("#resumePage").textContent =
+      (last.page + 1) + (last.total ? " / " + last.total : "") + "쪽";
+  }
+
+  $("#resumeCard").addEventListener("click", async () => {
+    const card = $("#resumeCard");
+    card.disabled = true;
+    try {
+      // the folder may no longer be reachable — most browsers forget it — so
+      // falling back to the picker is the normal outcome, not an error
+      if (!(await library.resume())) { goto("library"); toast("폴더를 다시 골라주세요."); }
+    } finally { card.disabled = false; }
+  });
+
   function routeFromHash() {
-    show((location.hash || "").replace(/^#\/?/, "") || "home");
+    const name = (location.hash || "").replace(/^#\/?/, "") || "home";
+    show(name);
+    if (name === "home") showResume();
   }
   const goto = (name) => { location.hash = name === "home" ? "" : "#/" + name; };
 
@@ -53,7 +82,11 @@ export function initApp() {
   let library = null;
   const reader = createReader($("#reader"), {
     onProgress: (src, page) => { if (library) library.onProgress(src, page); },
-    onClose: () => { if (library) library.refresh(); }
+    onClose: () => {
+      if (!library) return;
+      library.refresh();
+      if (shell.dataset.view === "home") showResume();
+    }
   });
   const openReader = (source, index) => reader.open(source, index);
 

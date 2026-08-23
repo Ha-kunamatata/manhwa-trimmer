@@ -3,22 +3,34 @@
  *
  * It knows nothing about where pages come from — see ./sources.js. Hand it a
  * page source and it reads: one leaf or a spread, left-to-right or right-to-
- * left, turning with a hinge at the spine.
+ * left, turning like paper, with pins, zoom, a page list and a continuous
+ * scrolling mode for a phone.
  *
- * Two things drive the shape of this file:
+ * Three things shape this file.
  *
- *   Pages arrive asynchronously. A folder source has to decode a file before it
- *   can be drawn, so every render is awaited and carries a token — a fast reader
- *   outruns the decoder, and a stale render must not paint over a newer one.
+ *   Pages arrive asynchronously, so every render is awaited and carries a
+ *   token; a fast reader outruns the decoder and a stale render must not paint
+ *   over a newer one.
  *
- *   Pages are not all the same size. Slices off one strip are, but a folder of
- *   scans is not, so leaves are normalised to a common height before being laid
- *   side by side rather than assuming one width for all.
+ *   Every state change queues. Turning, toggling a spread, changing chapter and
+ *   resizing all run one at a time, because two of them interleaved leave the
+ *   canvas and the page counter describing different places.
+ *
+ *   Pages are not all the same size, so leaves are normalised to a common
+ *   height before being laid side by side rather than assuming one width.
  */
 import { clamp } from "../core/geometry.js";
+import { settleTarget } from "../core/curl.js";
+import {
+  isPinned, togglePin, removePin, groupPins, countPins
+} from "../core/bookmarks.js";
+import { drawCurl } from "./curl.js";
 
-const GAP = 10;         // hairline between two leaves
-const TURN_MS = 420;
+const GAP = 10;              // hairline between two leaves
+const TURN_MS = 520;
+const TAP_SLOP = 12;         // movement below this is a tap, not a drag
+const MAX_ZOOM = 5;
+const CHROME_IDLE = 2600;
 
 export function createReader(root, hooks = {}) {
   const $ = (s) => root.querySelector(s);
@@ -26,44 +38,45 @@ export function createReader(root, hooks = {}) {
   const R = {
     root,
     stage: $("#rStage"), book: $("#rBook"), cv: $("#rCanvas"),
-    flip: $("#rFlip"), flipFront: $("#rFlipFront"), flipBack: $("#rFlipBack"),
-    flipHold: $("#rFlipHold"),
+    scroll: $("#rScroll"),
     count: $("#rCount"), title: $("#rTitle"), sub: $("#rSub"),
     bar: $("#rBar"), hint: $("#rHint"), busy: $("#rBusy"),
+    topBar: $("#rTopBar"), foot: $("#rFoot"),
+    slider: $("#rSlider"), footFrom: $("#rFootFrom"), footTo: $("#rFootTo"),
     close: $("#rClose"), dir: $("#rDir"), fit: $("#rFit"),
-    spread: $("#rSpread"), cover: $("#rCover"), anim: $("#rAnim"),
-    zoneL: $("#rZoneL"), zoneR: $("#rZoneR")
+    spread: $("#rSpread"), cover: $("#rCover"), anim: $("#rAnim"), mode: $("#rMode"),
+    settings: $("#rSettings"), settingsPanel: $("#rSettingsPanel"),
+    full: $("#rFull"),
+    pin: $("#rPin"), pinCount: $("#rPinCount"),
+    pinListBtn: $("#rPinList"), pinPanel: $("#rPinPanel"),
+    pinRows: $("#rPinList2"), pinEmpty: $("#rPinEmpty"), pinClose: $("#rPinClose"),
+    thumbBtn: $("#rThumbBtn"), thumbs: $("#rThumbs"),
+    thumbGrid: $("#rThumbGrid"), thumbClose: $("#rThumbClose")
   };
 
   const view = {
     open: false, idx: 0, source: null,
     fit: "page", rtl: true,
     spread: "single", spreadAuto: true, coverAlone: true,
-    animate: true
+    animate: true, mode: "book"
   };
+  const zoom = { scale: 1, tx: 0, ty: 0 };
 
-  let token = 0;          // guards against a stale async render landing late
-  let flipAnim = null;    // the turn in flight, if any
-  let rolling = false;    // a chapter change is under way
+  let token = 0;             // guards against a stale async render landing late
+  let rolling = false;       // a chapter change is under way
+  let geo = null;            // the current render's on-screen size
+  let pins = loadPins();
 
+  // ---------- the queue ----------
   /**
-   * Navigation runs one step at a time.
-   *
-   * Turning a page is asynchronous twice over — the next page may still be
-   * decoding, and the turn itself takes a fifth of a second. Someone reading
-   * quickly taps again inside that, and letting two steps interleave means the
-   * page counter and the canvas can disagree about where the reader is.
-   *
-   * So steps queue instead. A step that has others waiting behind it skips its
-   * animation, which keeps a burst of taps feeling immediate rather than
-   * playing out a second of turns after the reader has stopped.
+   * Navigation runs one step at a time. A step with others waiting behind it
+   * skips its animation, so a burst of taps stays immediate instead of playing
+   * out a second of turns after the reader has stopped.
    */
   let chain = Promise.resolve();
   let queued = 0;
   function enqueue(fn) {
     queued++;
-    // a failed step must not take the queue down with it, but it must still be
-    // heard: swallowing it silently leaves the reader frozen with no clue why
     chain = chain
       .then(fn)
       .catch((err) => { console.error("페이지 이동 실패", err); })
@@ -81,15 +94,22 @@ export function createReader(root, hooks = {}) {
       if (v.spread) { view.spread = v.spread; view.spreadAuto = false; }
       if (typeof v.coverAlone === "boolean") view.coverAlone = v.coverAlone;
       if (typeof v.animate === "boolean") view.animate = v.animate;
+      if (v.mode) view.mode = v.mode;
     } catch (e) {}
   }
   function savePrefs() {
     try {
       localStorage.setItem("manhwa-reader-prefs", JSON.stringify({
         rtl: view.rtl, fit: view.fit, spread: view.spread,
-        coverAlone: view.coverAlone, animate: view.animate
+        coverAlone: view.coverAlone, animate: view.animate, mode: view.mode
       }));
     } catch (e) {}
+  }
+  function loadPins() {
+    try { return JSON.parse(localStorage.getItem("manhwa-pins") || "{}"); } catch (e) { return {}; }
+  }
+  function savePins() {
+    try { localStorage.setItem("manhwa-pins", JSON.stringify(pins)); } catch (e) {}
   }
   const markKey = () => "manhwa-reader:" + (view.source ? view.source.id : "untitled");
   function saveMark() {
@@ -109,7 +129,7 @@ export function createReader(root, hooks = {}) {
     const n = view.source ? view.source.count : 0;
     if (!n) return [];
     i = clamp(i, 0, n - 1);
-    if (view.spread !== "double") return [i];
+    if (view.spread !== "double" || view.mode === "scroll") return [i];
     if (view.coverAlone && i === 0) return [0];
     const off = view.coverAlone ? 1 : 0;
     const a = i - ((i - off) % 2);
@@ -118,41 +138,51 @@ export function createReader(root, hooks = {}) {
 
   // ---------- rendering ----------
   /**
-   * Lay the leaves out and paint them. Leaves are scaled to a shared height so
-   * a spread of two differently sized scans still meets at the spine.
+   * Lay the leaves out and paint them. Leaves are scaled to a shared height so a
+   * spread of two differently sized scans still meets at the spine.
    */
-  function paint(canvas, leaves) {
+  function layout(leaves) {
     const order = view.rtl ? leaves.slice().reverse() : leaves;
     const H = Math.max.apply(null, order.map((p) => p.sh));
     const boxes = order.map((p) => ({ page: p, w: p.sw * (H / p.sh), h: H }));
     const gap = boxes.length > 1 ? GAP : 0;
     const srcW = boxes.reduce((s, b) => s + b.w, 0) + gap * (boxes.length - 1);
-    const srcH = H;
-    if (srcW <= 0 || srcH <= 0) return null;
+    if (srcW <= 0 || H <= 0) return null;
 
     const availW = R.stage.clientWidth, availH = R.stage.clientHeight;
     if (availW <= 0) return null;
-    const scale = view.fit === "width" ? availW / srcW : Math.min(availW / srcW, availH / srcH);
-    const dw = Math.max(1, Math.round(srcW * scale));
-    const dh = Math.max(1, Math.round(srcH * scale));
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const scale = view.fit === "width" ? availW / srcW : Math.min(availW / srcW, availH / H);
+    return {
+      boxes, gap, srcW, srcH: H, scale,
+      dw: Math.max(1, Math.round(srcW * scale)),
+      dh: Math.max(1, Math.round(H * scale)),
+      leaves: boxes.length
+    };
+  }
 
-    canvas.width = Math.round(dw * dpr);
-    canvas.height = Math.round(dh * dpr);
+  /** Backing pixels per CSS pixel — raised while zoomed so text stays crisp. */
+  function backing() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    return Math.min(4, dpr * Math.max(1, Math.min(zoom.scale, 3)));
+  }
+
+  function paint(canvas, L, ratio) {
+    canvas.width = Math.round(L.dw * ratio);
+    canvas.height = Math.round(L.dh * ratio);
     const ctx = canvas.getContext("2d");
-    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);   // draw in source units
+    ctx.setTransform(ratio * L.scale, 0, 0, ratio * L.scale, 0, 0);  // source units
     ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, srcW, srcH);
+    ctx.fillRect(0, 0, L.srcW, L.srcH);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-
     let x = 0;
-    for (const b of boxes) {
+    for (const b of L.boxes) {
       const p = b.page;
       ctx.drawImage(p.img, p.sx, p.sy, p.sw, p.sh, x, 0, b.w, b.h);
-      x += b.w + gap;
+      x += b.w + L.gap;
     }
-    return { dw, dh, leaves: boxes.length };
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    return ctx;
   }
 
   async function fetchLeaves(idxs) {
@@ -167,6 +197,7 @@ export function createReader(root, hooks = {}) {
   /** Paint the current index. Returns the geometry, or null if superseded. */
   async function render() {
     if (!view.source || !view.source.count) return null;
+    if (view.mode === "scroll") return renderScroll();
     const mine = ++token;
     const idxs = pagesAt(view.idx);
 
@@ -174,23 +205,23 @@ export function createReader(root, hooks = {}) {
     let leaves;
     try { leaves = await fetchLeaves(idxs); }
     finally { clearTimeout(slow); }
-    if (mine !== token) return null;                 // a newer render won
+    if (mine !== token) return null;
     R.busy.hidden = true;
     if (!leaves.length) return null;
 
-    const geo = paint(R.cv, leaves);
-    if (!geo) return null;
-    R.cv.style.width = geo.dw + "px";
-    R.cv.style.height = geo.dh + "px";
-    R.book.style.width = geo.dw + "px";
-    R.book.style.height = geo.dh + "px";
-    R.stage.scrollTop = 0;
-    // labels move with the pixels. Updating the chapter name anywhere else lets
-    // it announce a chapter whose pages are not on screen yet — or, if this
-    // render was superseded, one that never arrived at all
+    const L = layout(leaves);
+    if (!L) return null;
+    paint(R.cv, L, backing());
+    R.cv.style.width = L.dw + "px";
+    R.cv.style.height = L.dh + "px";
+    R.book.style.width = L.dw + "px";
+    R.book.style.height = L.dh + "px";
+    geo = L;
+    // labels move with the pixels: a name updated anywhere else can announce a
+    // page that is not on screen, or one a superseded render never brought
     setTitle();
     showCount(idxs);
-    return geo;
+    return L;
   }
 
   function showCount(idxs) {
@@ -200,119 +231,155 @@ export function createReader(root, hooks = {}) {
       : String(idxs[0] + 1);
     R.count.textContent = label + " / " + n;
     R.bar.style.width = (n > 1 ? (idxs[idxs.length - 1] / (n - 1)) * 100 : 100) + "%";
+    R.slider.max = String(Math.max(0, n - 1));
+    R.slider.value = String(idxs[0]);
+    R.footFrom.textContent = String(idxs[0] + 1);
+    R.footTo.textContent = String(n);
+    syncPinButton();
+    markThumb();
   }
 
   // ---------- the page turn ----------
   /**
-   * A spread turns like real paper: one sheet swings about the spine, its front
-   * the leaf that is leaving and its back the leaf that arrives on the far side.
-   *
-   * Two details are what make it read as paper rather than as a card trick.
-   *
-   *   The far half must keep showing the OLD page until the sheet lands on it.
-   *   The destination canvas already holds the finished spread, so without a
-   *   held copy the arriving page appears while the sheet is still in mid-air.
-   *
-   *   A single-page view has no far half, so a full 180° would land the sheet
-   *   beside the book showing a page that is already on screen. There the sheet
-   *   only swings to edge-on, uncovering the new page beneath it.
+   * Turning is composited into the one canvas rather than layered in the DOM,
+   * because the far half has to keep showing the OLD page until the sheet lands
+   * on it. The destination render already holds the finished spread, so without
+   * that the arriving page appears while the sheet is still in mid-air.
    */
-  function runTurn(before, after, forward) {
-    // A cover standing alone becomes a spread of two. The sheet has no honest
-    // size across that change — stretched to the new width it reads as a smear —
-    // so that one transition simply cuts.
-    if (before.leaves !== after.leaves) return Promise.resolve();
+  const turn = { active: false, before: null, after: null, leftward: true, progress: 0, forward: true };
 
-    const dw = after.dw, dh = after.dh;
-    const double = after.leaves > 1;
-    const half = double ? dw / 2 : dw;
-    // reading right-to-left, a forward turn sweeps the left leaf to the right
-    const leftward = forward === view.rtl;
-    const leafLeft = leftward ? 0 : dw - half;
-
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const faces = double ? [R.flipFront, R.flipBack, R.flipHold] : [R.flipFront];
-    for (const c of faces) {
-      c.width = Math.max(1, Math.round(half * dpr));
-      c.height = Math.max(1, Math.round(dh * dpr));
-      c.style.width = half + "px";
-      c.style.height = dh + "px";
-    }
-
-    // the turning half, as it looks now — cropped in the OLD render's own units,
-    // which need not match the new one if the pages differ in size
-    const bHalf = double ? before.dw / 2 : before.dw;
-    blit(R.flipFront, before.canvas, before.dw, leftward ? 0 : before.dw - bHalf, bHalf);
-    R.flipBack.hidden = !double;
-    R.flipHold.hidden = !double;
-    if (double) {
-      const farLeft = dw - half - leafLeft;
-      blit(R.flipBack, R.cv, dw, farLeft, half);                       // where it lands
-      blit(R.flipHold, before.canvas, before.dw, leftward ? bHalf : 0, bHalf);
-      R.flipHold.style.left = farLeft + "px";
-    }
-
-    R.flip.style.width = half + "px";
-    R.flip.style.height = dh + "px";
-    R.flip.style.left = leafLeft + "px";
-    R.flip.style.transformOrigin = leftward ? "right center" : "left center";
-    R.flip.hidden = false;
-
-    const end = (leftward ? -1 : 1) * (double ? 180 : 90);
-    const anim = R.flip.animate(
-      [{ transform: "rotateY(0deg)" }, { transform: `rotateY(${end}deg)` }],
-      { duration: TURN_MS, easing: double ? "cubic-bezier(.35,.02,.28,1)" : "cubic-bezier(.4,0,.7,.6)" }
-    );
-    flipAnim = anim;
-    return anim.finished.catch(() => {}).then(() => {
-      if (flipAnim !== anim) return;         // a faster reader started another
-      flipAnim = null;
-      R.flip.hidden = true;
-      R.flipHold.hidden = true;
-    });
-  }
-
-  /**
-   * Copy a vertical slice of `src` onto `dest`, stretched to fill it.
-   * `srcCssW` is what `src` measures on screen — a canvas is backed by more
-   * pixels than that on a retina display, so the crop has to be scaled by the
-   * ratio between the two rather than taken as given.
-   */
-  function blit(dest, src, srcCssW, sxCss, swCss) {
-    const ratio = srcCssW > 0 ? src.width / srcCssW : 1;
-    const ctx = dest.getContext("2d");
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, dest.width, dest.height);
-    ctx.drawImage(src, sxCss * ratio, 0, swCss * ratio, src.height,
-                  0, 0, dest.width, dest.height);
-  }
-
-  function snapshot() {
-    if (!R.cv.width) return null;
+  function snapshot(L) {
     const c = document.createElement("canvas");
-    c.width = R.cv.width; c.height = R.cv.height;
-    c.getContext("2d").drawImage(R.cv, 0, 0);
+    const ratio = Math.min(2, window.devicePixelRatio || 1);
+    paint(c, L, ratio);
+    c._cssW = L.dw;
     return c;
+  }
+
+  /** Render the view at `idx` off-screen, without disturbing what is displayed. */
+  async function offscreen(idx) {
+    const keep = view.idx;
+    view.idx = idx;
+    const idxs = pagesAt(idx);
+    view.idx = keep;
+    const leaves = await fetchLeaves(idxs);
+    if (!leaves.length) return null;
+    const L = layout(leaves);
+    if (!L) return null;
+    const c = document.createElement("canvas");
+    paint(c, L, Math.min(2, window.devicePixelRatio || 1));
+    c._cssW = L.dw;
+    return { canvas: c, layout: L };
+  }
+
+  /** Paint one frame of a turn: base underneath, curling sheet on top. */
+  function drawTurnFrame(progress) {
+    const L = turn.after.layout;
+    const ratio = Math.min(2, window.devicePixelRatio || 1);
+    R.cv.width = Math.round(L.dw * ratio);
+    R.cv.height = Math.round(L.dh * ratio);
+    R.cv.style.width = L.dw + "px";
+    R.cv.style.height = L.dh + "px";
+    R.book.style.width = L.dw + "px";
+    R.book.style.height = L.dh + "px";
+
+    const ctx = R.cv.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.fillStyle = "#0d0d0f";
+    ctx.fillRect(0, 0, L.dw, L.dh);
+
+    const double = L.leaves > 1 && turn.before.layout.leaves > 1;
+    const half = double ? L.dw / 2 : L.dw;
+    const leafLeft = turn.leftward ? 0 : L.dw - half;
+    const farLeft = L.dw - half - leafLeft;
+
+    // base: the half being uncovered comes from the destination, the half the
+    // sheet is about to land on keeps the old page until it does
+    ctx.drawImage(turn.after.canvas,
+      leafLeft * ratio, 0, half * ratio, turn.after.canvas.height,
+      leafLeft, 0, half, L.dh);
+    if (double) {
+      const b = turn.before;
+      const bHalf = b.canvas._cssW / 2;
+      const bRatio = b.canvas.width / b.canvas._cssW;
+      ctx.drawImage(b.canvas,
+        (turn.leftward ? bHalf : 0) * bRatio, 0, bHalf * bRatio, b.canvas.height,
+        farLeft, 0, half, L.dh);
+    }
+
+    const spineX = turn.leftward ? leafLeft + half : leafLeft;
+    // source rectangles in each canvas's own backing pixels: the two renders can
+    // differ in size, and the sheet is only half of each of them in a spread
+    const bc = turn.before.canvas, ac = turn.after.canvas;
+    const bScale = bc.width / bc._cssW, aScale = ac.width / ac._cssW;
+    const bHalf = double ? bc._cssW / 2 : bc._cssW;
+    drawCurl(ctx, {
+      progress, leftward: turn.leftward,
+      spineX, width: half, height: L.dh, top: 0,
+      front: {
+        img: bc, sh: bc.height,
+        sx: (turn.leftward ? 0 : bc._cssW - bHalf) * bScale,
+        sw: bHalf * bScale
+      },
+      back: {
+        img: ac, sh: ac.height,
+        sx: farLeft * aScale,
+        sw: half * aScale
+      }
+    });
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   const reduceMotion = () =>
     window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const wantsTurn = () => view.animate && !reduceMotion() && view.mode === "book" && queued <= 1;
+
+  /**
+   * A cover standing alone becomes a spread of two.
+   *
+   * Across that change the sheet has no honest size and the spine has no honest
+   * place — the leaf that turns is half of one view and all of the other. Sized
+   * to either it flies off the canvas or smears, so that one transition cuts.
+   */
+  const sameShape = (a, b) => pagesAt(a).length === pagesAt(b).length;
+
+  /** Run a turn from `progress` to `to`, then settle on the destination. */
+  function animateTurn(from, to) {
+    return new Promise((done) => {
+      const span = Math.abs(to - from) || 1;
+      const ms = TURN_MS * span;
+      const t0 = performance.now();
+      const step = (now) => {
+        const k = Math.min(1, (now - t0) / ms);
+        // decelerating: paper carries momentum into the turn and settles softly
+        const e = 1 - Math.pow(1 - k, 3);
+        drawTurnFrame(from + (to - from) * e);
+        if (k < 1) requestAnimationFrame(step);
+        else done();
+      };
+      requestAnimationFrame(step);
+    });
+  }
 
   async function goTo(next, forward) {
-    if (flipAnim) { flipAnim.cancel(); flipAnim = null; R.flip.hidden = true; R.flipHold.hidden = true; }
+    const target = clamp(next, 0, view.source.count - 1);
+    if (!wantsTurn() || !geo || !sameShape(view.idx, target)) {
+      view.idx = target;
+      saveMark();
+      await render();
+      return;
+    }
+    const before = { canvas: snapshot(geo), layout: geo };
+    const after = await offscreen(target);
+    if (!after) { view.idx = target; saveMark(); await render(); return; }
 
-    const wantsTurn = view.animate && !reduceMotion() && queued <= 1;
-    const before = wantsTurn
-      ? { canvas: snapshot(), dw: parseFloat(R.cv.style.width), dh: parseFloat(R.cv.style.height),
-          leaves: pagesAt(view.idx).length }
-      : null;
-
-    view.idx = clamp(next, 0, view.source.count - 1);
+    turn.before = before;
+    turn.after = after;
+    turn.leftward = forward === view.rtl;
+    await animateTurn(0, 1);
+    view.idx = target;
     saveMark();
-    const after = await render();
-
-    if (before && before.canvas && after) await runTurn(before, after, forward);
+    await render();
   }
 
   /** Step one view forward or back, rolling into the next chapter at the ends. */
@@ -334,7 +401,7 @@ export function createReader(root, hooks = {}) {
     const src = view.source;
     const step = dir > 0 ? src.nextChapter : src.prevChapter;
     if (!step) { flash(dir > 0 ? "마지막 페이지예요." : "첫 페이지예요."); return; }
-    rolling = true;                     // one chapter at a time, however fast the taps
+    rolling = true;
     R.busy.hidden = false;
     let nextSrc = null;
     try { nextSrc = await step(); } catch (e) {}
@@ -343,9 +410,12 @@ export function createReader(root, hooks = {}) {
     src.release();
     view.source = nextSrc;
     view.idx = dir > 0 ? 0 : pagesAt(nextSrc.count - 1)[0];
+    resetZoom();
     saveMark();
     flash(nextSrc.title);
+    thumbsDirty = true;
     try { await render(); } finally { rolling = false; }
+    if (!R.thumbs.hidden) buildThumbs();
   }
 
   let flashTimer = null;
@@ -356,7 +426,404 @@ export function createReader(root, hooks = {}) {
     flashTimer = setTimeout(() => { R.hint.style.opacity = "0"; }, 1800);
   }
 
+  // ---------- zoom and pan ----------
+  function applyZoom() {
+    R.book.style.transform =
+      "translate(" + zoom.tx + "px," + zoom.ty + "px) scale(" + zoom.scale + ")";
+    R.stage.classList.toggle("zoomed", zoom.scale > 1.01);
+  }
+  function resetZoom() {
+    zoom.scale = 1; zoom.tx = 0; zoom.ty = 0;
+    applyZoom();
+  }
+  /** Keep the page overlapping the stage, so it can never be lost off-screen. */
+  function clampPan() {
+    if (!geo) return;
+    const w = geo.dw * zoom.scale, h = geo.dh * zoom.scale;
+    const sw = R.stage.clientWidth, sh = R.stage.clientHeight;
+    const slackX = Math.max(0, (w - sw) / 2) + 40;
+    const slackY = Math.max(0, (h - sh) / 2) + 40;
+    zoom.tx = clamp(zoom.tx, -slackX, slackX);
+    zoom.ty = clamp(zoom.ty, -slackY, slackY);
+  }
+  function zoomAt(scale, px, py) {
+    const next = clamp(scale, 1, MAX_ZOOM);
+    const r = R.book.getBoundingClientRect();
+    const cx = px - (r.left + r.width / 2);
+    const cy = py - (r.top + r.height / 2);
+    const k = next / zoom.scale;
+    zoom.tx = zoom.tx * k + cx * (1 - k);
+    zoom.ty = zoom.ty * k + cy * (1 - k);
+    zoom.scale = next;
+    if (next <= 1.001) { zoom.tx = 0; zoom.ty = 0; }
+    clampPan();
+    applyZoom();
+    sharpen();
+  }
+  let sharpenTimer = null;
+  function sharpen() {
+    clearTimeout(sharpenTimer);
+    sharpenTimer = setTimeout(() => { if (view.open && !turn.active) enqueue(() => render()); }, 220);
+  }
+
   // ---------- chrome ----------
+  let chromeTimer = null;
+  function showChrome(sticky) {
+    R.root.classList.remove("immersive");
+    clearTimeout(chromeTimer);
+    if (!sticky) chromeTimer = setTimeout(hideChrome, CHROME_IDLE);
+  }
+  function hideChrome() {
+    if (!R.settingsPanel.hidden || !R.thumbs.hidden || !R.pinPanel.hidden) return;
+    R.root.classList.add("immersive");
+  }
+  function toggleChrome() {
+    if (R.root.classList.contains("immersive")) showChrome(true);
+    else hideChrome();
+  }
+
+  // ---------- pointer: tap, drag-turn, pinch ----------
+  const pointers = new Map();
+  let gesture = null;
+
+  function stagePoint(e) {
+    const r = R.stage.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, h: r.height };
+  }
+
+  R.stage.addEventListener("pointerdown", (e) => {
+    if (view.mode === "scroll") return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    R.stage.setPointerCapture(e.pointerId);
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      gesture = { kind: "pinch", d0: Math.hypot(a.x - b.x, a.y - b.y), s0: zoom.scale };
+      return;
+    }
+    const p = stagePoint(e);
+    gesture = {
+      kind: "down", x0: e.clientX, y0: e.clientY, p,
+      tx0: zoom.tx, ty0: zoom.ty, t0: performance.now(), moved: false
+    };
+  });
+
+  R.stage.addEventListener("pointermove", (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (!gesture) return;
+
+    if (gesture.kind === "pinch" && pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      zoomAt(gesture.s0 * (d / gesture.d0), (a.x + b.x) / 2, (a.y + b.y) / 2);
+      return;
+    }
+    if (gesture.kind === "pinch") return;
+
+    const dx = e.clientX - gesture.x0, dy = e.clientY - gesture.y0;
+    if (!gesture.moved && Math.hypot(dx, dy) < TAP_SLOP) return;
+    gesture.moved = true;
+
+    if (zoom.scale > 1.01) {                       // zoomed in: the drag pans
+      zoom.tx = gesture.tx0 + dx;
+      zoom.ty = gesture.ty0 + dy;
+      clampPan(); applyZoom();
+      return;
+    }
+    if (Math.abs(dy) > Math.abs(dx) * 1.4) return; // a vertical drag is not a turn
+    if (gesture.kind === "down") startDragTurn(dx);
+    if (gesture.kind === "turn") updateDragTurn(dx);
+  });
+
+  const endPointer = (e) => {
+    pointers.delete(e.pointerId);
+    try { R.stage.releasePointerCapture(e.pointerId); } catch (err) {}
+    if (!gesture) return;
+    if (gesture.kind === "pinch") { gesture = pointers.size ? null : null; return; }
+    if (gesture.kind === "turn") { finishDragTurn(e); return; }
+    if (!gesture.moved) handleTap(gesture.p);
+    gesture = null;
+  };
+  R.stage.addEventListener("pointerup", endPointer);
+  R.stage.addEventListener("pointercancel", endPointer);
+
+  /**
+   * A tap near either edge turns; a tap in the middle clears the chrome away.
+   * The middle is generous, because on a phone the thing people most want from
+   * a tap is to see the page without anything on top of it.
+   */
+  function handleTap(p) {
+    closePanels();
+    const edge = p.w * 0.32;
+    if (p.x < edge) step(view.rtl ? 1 : -1);
+    else if (p.x > p.w - edge) step(view.rtl ? -1 : 1);
+    else toggleChrome();
+  }
+
+  function turnDistance() {
+    return Math.max(120, (geo ? geo.dw : R.stage.clientWidth) * 0.55);
+  }
+
+  function startDragTurn(dx) {
+    if (!geo || !wantsTurn()) return;
+    const forward = view.rtl ? dx < 0 : dx > 0;
+    const cur = pagesAt(view.idx);
+    const n = view.source.count;
+    const target = forward ? cur[cur.length - 1] + 1 : (cur[0] > 0 ? pagesAt(cur[0] - 1)[0] : -1);
+    if (target < 0 || target > n - 1) return;      // no neighbour to drag in
+    if (!sameShape(view.idx, target)) return;      // cover to spread simply cuts
+
+    gesture.kind = "turn";
+    gesture.forward = forward;
+    gesture.target = target;
+    gesture.progress = 0;
+    gesture.lastX = dx;
+    gesture.lastT = performance.now();
+    gesture.vel = 0;
+    turn.active = true;
+    turn.before = { canvas: snapshot(geo), layout: geo };
+    turn.leftward = forward === view.rtl;
+    turn.after = null;
+    R.stage.classList.add("dragging");
+    offscreen(target).then((after) => {
+      if (gesture && gesture.kind === "turn") turn.after = after;
+    });
+  }
+
+  function updateDragTurn(dx) {
+    if (!turn.after) return;
+    const p = clamp(Math.abs(dx) / turnDistance(), 0, 1);
+    const now = performance.now();
+    const dt = Math.max(16, now - gesture.lastT);
+    gesture.vel = (p - gesture.progress) / (dt / 1000);
+    gesture.progress = p;
+    gesture.lastT = now;
+    drawTurnFrame(p);
+  }
+
+  function finishDragTurn() {
+    const g = gesture;
+    gesture = null;
+    R.stage.classList.remove("dragging");
+    if (!turn.after) { turn.active = false; enqueue(() => render()); return; }
+    const to = settleTarget(g.progress, g.vel);
+    enqueue(async () => {
+      await animateTurn(g.progress, to);
+      turn.active = false;
+      if (to === 1) { view.idx = g.target; saveMark(); }
+      await render();
+    });
+  }
+
+  // ---------- pins ----------
+  function currentPin() {
+    if (!view.source) return null;
+    return {
+      sourceId: view.source.id,
+      page: pagesAt(view.idx)[0] || 0,
+      series: view.source.seriesName || "",
+      chapter: view.source.title || "",
+      at: Date.now()
+    };
+  }
+  function syncPinButton() {
+    const p = currentPin();
+    const on = p && isPinned(pins, p.sourceId, p.page);
+    R.pin.setAttribute("aria-pressed", on ? "true" : "false");
+    R.pin.title = on ? "핀 빼기 (P)" : "이 페이지 핀 (P)";
+    R.pinCount.textContent = String(countPins(pins));
+  }
+  function doTogglePin() {
+    const p = currentPin();
+    if (!p) return;
+    const was = isPinned(pins, p.sourceId, p.page);
+    pins = togglePin(pins, p);
+    savePins();
+    syncPinButton();
+    markThumb();
+    if (!R.pinPanel.hidden) buildPins();
+    flash(was ? "핀을 뺐어요." : "이 페이지를 핀했어요.");
+  }
+
+  function buildPins() {
+    const groups = groupPins(pins);
+    R.pinRows.innerHTML = "";
+    R.pinEmpty.hidden = groups.length > 0;
+    for (const g of groups) {
+      const head = document.createElement("div");
+      head.className = "pin-series";
+      head.textContent = g.series || "이름 없는 시리즈";
+      R.pinRows.appendChild(head);
+      for (const p of g.pins) {
+        const row = document.createElement("div");
+        row.className = "pin-row";
+        const go = document.createElement("button");
+        go.className = "pin-row";
+        go.style.padding = "0";
+        go.innerHTML = '<span class="where"></span><span class="pg"></span>';
+        go.querySelector(".where").textContent = p.chapter;
+        go.querySelector(".pg").textContent = p.page + 1 + "쪽";
+        go.addEventListener("click", () => jumpToPin(p));
+        const drop = document.createElement("button");
+        drop.className = "drop";
+        drop.textContent = "빼기";
+        drop.addEventListener("click", (e) => {
+          e.stopPropagation();
+          pins = removePin(pins, p.sourceId, p.page);
+          savePins(); syncPinButton(); buildPins(); markThumb();
+        });
+        row.append(go, drop);
+        R.pinRows.appendChild(row);
+      }
+    }
+  }
+
+  function jumpToPin(p) {
+    closePanels();
+    if (view.source && p.sourceId === view.source.id) {
+      enqueue(async () => { view.idx = pagesAt(p.page)[0]; resetZoom(); saveMark(); await render(); });
+      return;
+    }
+    if (hooks.onJump) hooks.onJump(p);
+    else flash("그 화는 지금 열려 있지 않아요.");
+  }
+
+  // ---------- page list ----------
+  let thumbsDirty = true;
+  let thumbObserver = null;
+
+  function buildThumbs() {
+    if (!view.source) return;
+    R.thumbGrid.innerHTML = "";
+    if (thumbObserver) thumbObserver.disconnect();
+    thumbObserver = new IntersectionObserver((entries) => {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue;
+        drawThumb(en.target);
+        thumbObserver.unobserve(en.target);
+      }
+    }, { root: R.thumbGrid, rootMargin: "200px" });
+
+    for (let i = 0; i < view.source.count; i++) {
+      const b = document.createElement("button");
+      b.className = "thumb";
+      b.dataset.page = String(i);
+      b.innerHTML = '<canvas></canvas><span class="n"></span>';
+      b.querySelector(".n").textContent = String(i + 1);
+      b.addEventListener("click", () => {
+        closePanels();
+        enqueue(async () => { view.idx = pagesAt(i)[0]; resetZoom(); saveMark(); await render(); });
+      });
+      R.thumbGrid.appendChild(b);
+      thumbObserver.observe(b);
+    }
+    thumbsDirty = false;
+    markThumb();
+  }
+
+  async function drawThumb(el) {
+    const i = Number(el.dataset.page);
+    const p = await view.source.getPage(i);
+    if (!p) return;
+    const cv = el.querySelector("canvas");
+    const w = 84 * 2, h = Math.round(w * (p.sh / p.sw));
+    cv.width = w; cv.height = h;
+    cv.style.aspectRatio = p.sw + " / " + p.sh;
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(p.img, p.sx, p.sy, p.sw, p.sh, 0, 0, w, h);
+  }
+
+  function markThumb() {
+    if (!R.thumbGrid.children.length || !view.source) return;
+    const here = pagesAt(view.idx);
+    for (const el of R.thumbGrid.children) {
+      const i = Number(el.dataset.page);
+      el.classList.toggle("here", here.includes(i));
+      const flagged = isPinned(pins, view.source.id, i);
+      let flag = el.querySelector(".flag");
+      if (flagged && !flag) {
+        flag = document.createElement("span");
+        flag.className = "flag";
+        flag.textContent = "⚑";
+        el.appendChild(flag);
+      } else if (!flagged && flag) flag.remove();
+    }
+  }
+
+  // ---------- continuous scrolling ----------
+  let scrollObserver = null;
+  async function renderScroll() {
+    const mine = ++token;
+    if (!R.scroll.dataset.for || R.scroll.dataset.for !== view.source.id) {
+      R.scroll.innerHTML = "";
+      R.scroll.dataset.for = view.source.id;
+      if (scrollObserver) scrollObserver.disconnect();
+      scrollObserver = new IntersectionObserver((entries) => {
+        for (const en of entries) {
+          if (en.isIntersecting) drawSlot(en.target);
+          else clearSlot(en.target);
+          if (en.isIntersecting && en.intersectionRatio > 0.5) {
+            const i = Number(en.target.dataset.page);
+            if (i !== view.idx) { view.idx = i; saveMark(); showCount([i]); }
+          }
+        }
+      }, { root: R.scroll, rootMargin: "150% 0px", threshold: [0, 0.51] });
+
+      const width = Math.min(R.scroll.clientWidth, 900);
+      for (let i = 0; i < view.source.count; i++) {
+        const slot = document.createElement("canvas");
+        slot.className = "scroll-slot";
+        slot.dataset.page = String(i);
+        slot.style.width = width + "px";
+        slot.style.height = Math.round(width * 1.414) + "px";
+        R.scroll.appendChild(slot);
+        scrollObserver.observe(slot);
+      }
+    }
+    if (mine !== token) return null;
+    const target = R.scroll.querySelector('[data-page="' + view.idx + '"]');
+    if (target) target.scrollIntoView({ block: "start" });
+    showCount([view.idx]);
+    setTitle();
+    return null;
+  }
+
+  async function drawSlot(cv) {
+    if (cv.dataset.drawn === "1") return;
+    const i = Number(cv.dataset.page);
+    const p = await view.source.getPage(i);
+    if (!p) return;
+    const width = Math.min(R.scroll.clientWidth, 900);
+    const ratio = Math.min(2, window.devicePixelRatio || 1);
+    const h = Math.round(width * (p.sh / p.sw));
+    cv.style.width = width + "px";
+    cv.style.height = h + "px";
+    cv.width = Math.round(width * ratio);
+    cv.height = Math.round(h * ratio);
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(p.img, p.sx, p.sy, p.sw, p.sh, 0, 0, cv.width, cv.height);
+    cv.dataset.drawn = "1";
+  }
+  function clearSlot(cv) {
+    if (cv.dataset.drawn !== "1") return;
+    // a hundred decoded pages will not fit in a phone; let the far ones go
+    cv.width = 1; cv.height = 1;
+    cv.dataset.drawn = "0";
+  }
+
+  function applyMode() {
+    const scroll = view.mode === "scroll";
+    R.scroll.hidden = !scroll;
+    R.book.hidden = scroll;
+    R.mode.textContent = scroll ? "이어서 스크롤" : "책장 넘기기";
+    R.spread.disabled = scroll;
+    if (!scroll) { R.scroll.innerHTML = ""; R.scroll.dataset.for = ""; }
+    else resetZoom();
+  }
+
+  // ---------- chrome sync ----------
   function setTitle() {
     const s = view.source;
     R.title.textContent = (s && s.seriesName) || "";
@@ -374,6 +841,39 @@ export function createReader(root, hooks = {}) {
     R.cover.setAttribute("aria-pressed", view.coverAlone ? "true" : "false");
     R.anim.textContent = view.animate ? "넘김 켜짐" : "넘김 꺼짐";
     R.anim.setAttribute("aria-pressed", view.animate ? "true" : "false");
+    R.mode.textContent = view.mode === "scroll" ? "이어서 스크롤" : "책장 넘기기";
+    syncPinButton();
+  }
+
+  function closePanels() {
+    R.settingsPanel.hidden = true;
+    R.settings.setAttribute("aria-expanded", "false");
+    R.thumbs.hidden = true;
+    R.pinPanel.hidden = true;
+  }
+
+  // ---------- screen ----------
+  let wakeLock = null;
+  async function keepAwake(on) {
+    try {
+      if (on && "wakeLock" in navigator && !wakeLock) {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", () => { wakeLock = null; });
+      } else if (!on && wakeLock) {
+        await wakeLock.release();
+        wakeLock = null;
+      }
+    } catch (e) { /* a nice-to-have, never a requirement */ }
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (view.open && document.visibilityState === "visible") keepAwake(true);
+  });
+
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await R.root.requestFullscreen();
+    } catch (e) { flash("전체화면을 쓸 수 없어요."); }
   }
 
   // ---------- open / close ----------
@@ -385,6 +885,9 @@ export function createReader(root, hooks = {}) {
     view.idx = clamp(startIndex != null ? startIndex : loadMark(source), 0, source.count - 1);
     R.root.hidden = false;
     document.body.style.overflow = "hidden";
+    resetZoom();
+    closePanels();
+    thumbsDirty = true;
     setTitle();
     if (view.spreadAuto) {
       // a landscape window has room for two leaves; a phone held upright does not
@@ -392,28 +895,35 @@ export function createReader(root, hooks = {}) {
       view.spread = (w / h > 1.15 && w >= 900) ? "double" : "single";
     }
     view.idx = pagesAt(view.idx)[0];
+    applyMode();
     syncButtons();
+    showChrome(false);
+    keepAwake(true);
     await new Promise((r) => requestAnimationFrame(r));
-    // through the queue, so a tap on the first page waits for it to be there
     await enqueue(() => render());
-    flash("좌우를 누르거나 ← → 키로 넘기세요 · Esc로 닫기");
+    flash("좌우를 누르거나 끌어서 넘기세요 · 가운데를 누르면 화면이 깔끔해져요");
   }
 
   function close() {
     view.open = false;
-    token++;                      // abandon anything still decoding
+    token++;
     R.root.hidden = true;
     R.busy.hidden = true;
+    closePanels();
     document.body.style.overflow = "";
-    if (view.source) { view.source.release(); }
+    keepAwake(false);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
+    if (thumbObserver) { thumbObserver.disconnect(); thumbObserver = null; }
+    R.scroll.innerHTML = ""; R.scroll.dataset.for = "";
+    if (view.source) view.source.release();
     if (hooks.onClose) hooks.onClose();
   }
 
   // ---------- wiring ----------
+  const step = (dir) => enqueue(() => go(dir));
+
   R.close.addEventListener("click", close);
-  // the view toggles queue behind page turns for the same reason turns queue
-  // behind each other — a re-layout landing mid-turn leaves the canvas and the
-  // page counter describing different things
   R.spread.addEventListener("click", () => enqueue(async () => {
     view.spread = view.spread === "double" ? "single" : "double";
     view.spreadAuto = false;                    // an explicit choice sticks
@@ -430,50 +940,111 @@ export function createReader(root, hooks = {}) {
   }));
   R.fit.addEventListener("click", () => enqueue(async () => {
     view.fit = view.fit === "page" ? "width" : "page";
-    syncButtons(); savePrefs(); await render();
+    resetZoom(); syncButtons(); savePrefs(); await render();
   }));
   R.anim.addEventListener("click", () => {
     view.animate = !view.animate; syncButtons(); savePrefs();
   });
-  // In right-to-left reading the LEFT side advances, as in a printed comic.
-  const step = (dir) => enqueue(() => go(dir));
-  R.zoneL.addEventListener("click", () => step(view.rtl ? 1 : -1));
-  R.zoneR.addEventListener("click", () => step(view.rtl ? -1 : 1));
+  R.mode.addEventListener("click", () => enqueue(async () => {
+    view.mode = view.mode === "scroll" ? "book" : "scroll";
+    applyMode(); syncButtons(); savePrefs();
+    await render();
+  }));
+  R.full.addEventListener("click", toggleFullscreen);
+  R.pin.addEventListener("click", doTogglePin);
+
+  R.settings.addEventListener("click", () => {
+    const show = R.settingsPanel.hidden;
+    closePanels();
+    R.settingsPanel.hidden = !show;
+    R.settings.setAttribute("aria-expanded", show ? "true" : "false");
+    if (show) showChrome(true);
+  });
+  R.thumbBtn.addEventListener("click", () => {
+    const show = R.thumbs.hidden;
+    closePanels();
+    R.thumbs.hidden = !show;
+    if (show) { showChrome(true); if (thumbsDirty) buildThumbs(); else markThumb(); }
+  });
+  R.thumbClose.addEventListener("click", closePanels);
+  R.pinListBtn.addEventListener("click", () => {
+    const show = R.pinPanel.hidden;
+    closePanels();
+    R.pinPanel.hidden = !show;
+    if (show) { showChrome(true); buildPins(); }
+  });
+  R.pinClose.addEventListener("click", closePanels);
+
+  R.slider.addEventListener("input", () => {
+    showChrome(true);
+    const i = Number(R.slider.value);
+    R.footFrom.textContent = String(i + 1);
+  });
+  R.slider.addEventListener("change", () => enqueue(async () => {
+    view.idx = pagesAt(Number(R.slider.value))[0];
+    resetZoom(); saveMark(); await render();
+  }));
+
+  R.stage.addEventListener("wheel", (e) => {
+    if (view.mode === "scroll") return;
+    e.preventDefault();
+    if (e.ctrlKey || Math.abs(e.deltaY) < 40) {
+      zoomAt(zoom.scale * (e.deltaY < 0 ? 1.12 : 1 / 1.12), e.clientX, e.clientY);
+    } else if (zoom.scale <= 1.01) {
+      step(e.deltaY > 0 ? 1 : -1);
+    }
+  }, { passive: false });
+
+  R.stage.addEventListener("dblclick", (e) => {
+    if (view.mode === "scroll") return;
+    zoomAt(zoom.scale > 1.01 ? 1 : 2.4, e.clientX, e.clientY);
+  });
 
   document.addEventListener("keydown", (e) => {
     if (!view.open) return;
-    if (e.key === "Escape") { close(); return; }
+    if (e.key === "Escape") {
+      if (!R.settingsPanel.hidden || !R.thumbs.hidden || !R.pinPanel.hidden) { closePanels(); return; }
+      close(); return;
+    }
+    const k = e.key.toLowerCase();
     if (e.key === "ArrowLeft") { e.preventDefault(); step(view.rtl ? 1 : -1); }
     else if (e.key === "ArrowRight") { e.preventDefault(); step(view.rtl ? -1 : 1); }
-    else if (e.key === "ArrowDown" || e.key === "PageDown" || e.key === " ") { e.preventDefault(); step(1); }
-    else if (e.key === "ArrowUp" || e.key === "PageUp") { e.preventDefault(); step(-1); }
+    else if (e.key === "PageDown" || e.key === " ") { e.preventDefault(); step(1); }
+    else if (e.key === "PageUp") { e.preventDefault(); step(-1); }
+    else if (e.key === "ArrowDown" && view.mode === "book") { e.preventDefault(); step(1); }
+    else if (e.key === "ArrowUp" && view.mode === "book") { e.preventDefault(); step(-1); }
     else if (e.key === "Home") { e.preventDefault(); enqueue(() => goTo(0, false)); }
     else if (e.key === "End") { e.preventDefault(); enqueue(() => goTo(pagesAt(view.source.count - 1)[0], true)); }
-    else if (e.key === "d" || e.key === "D") { e.preventDefault(); R.spread.click(); }
+    else if (k === "d") { e.preventDefault(); R.spread.click(); }
+    else if (k === "p") { e.preventDefault(); doTogglePin(); }
+    else if (k === "b") { e.preventDefault(); R.pinListBtn.click(); }
+    else if (k === "t") { e.preventDefault(); R.thumbBtn.click(); }
+    else if (k === "f") { e.preventDefault(); toggleFullscreen(); }
+    else if (k === "0") { e.preventDefault(); resetZoom(); sharpen(); }
   });
 
-  let touchX = null, touchY = null;
-  R.stage.addEventListener("touchstart", (e) => {
-    if (e.touches.length !== 1) return;
-    touchX = e.touches[0].clientX; touchY = e.touches[0].clientY;
-  }, { passive: true });
-  R.stage.addEventListener("touchend", (e) => {
-    if (touchX == null) return;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - touchX, dy = t.clientY - touchY;
-    touchX = null;
-    if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy)) {
-      // swiping left moves forward when reading right-to-left
-      step(dx < 0 ? (view.rtl ? -1 : 1) : (view.rtl ? 1 : -1));
-    }
-  }, { passive: true });
+  /**
+   * A nudge of the mouse brings the chrome back — but it has to be a real nudge.
+   *
+   * A click reports a mousemove at the same spot, so reacting to every move let
+   * that phantom reveal the chrome a moment before the tap arrived. The tap then
+   * saw it visible and hid it again, which made tapping the middle a one-way
+   * trip: it could hide the chrome but never bring it back.
+   */
+  let mouseAt = null;
+  R.stage.addEventListener("mousemove", (e) => {
+    if (!view.open) return;
+    const moved = !mouseAt || Math.hypot(e.clientX - mouseAt.x, e.clientY - mouseAt.y) > 8;
+    mouseAt = { x: e.clientX, y: e.clientY };
+    if (moved) showChrome(false);
+  });
 
   let resizeTimer;
   window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
-    // through the queue like everything else: a re-layout that lands in the
-    // middle of a turn cancels that turn's render and strands its page counter
-    resizeTimer = setTimeout(() => { if (view.open) enqueue(() => render()); }, 150);
+    // through the queue like everything else: a re-layout landing mid-turn
+    // cancels that turn's render and strands its page counter
+    resizeTimer = setTimeout(() => { if (view.open) { resetZoom(); enqueue(() => render()); } }, 150);
   });
 
   loadPrefs();
