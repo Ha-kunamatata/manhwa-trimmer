@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>만화 재단기</title>
-<meta name="description" content="길게 캡처한 만화 이미지를 만화책 판형 기준으로 페이지 단위로 잘라 읽고 저장합니다.">
+<meta name="description" content="길게 캡처한 만화 이미지를 만화책 판형으로 잘라 저장하고, 폴더나 저장소의 만화를 만화책처럼 읽습니다.">
 <meta name="theme-color" content="#0f7a8c">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icons/icon-192.png">
@@ -17,8 +17,9 @@
 <link rel="stylesheet" href="./src/styles.css">
 </head>
 <body>
-<div class="app">
+<div class="app" id="appShell" data-view="home">
   <header class="brand">
+    <button class="back-home" id="backHome" hidden title="처음 화면으로">‹</button>
     <svg class="mark" width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden="true">
       <path d="M2 9V2H9" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M28 9V2H21" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -28,10 +29,36 @@
     </svg>
     <div>
       <h1>만화 재단기</h1>
-      <p>만화 페이지의 폭을 재고, 만화책 판형 비율로 균등하게 잘라 페이지 단위로 저장합니다</p>
+      <p id="brandSub">긴 캡처를 자르고, 만화책처럼 읽습니다</p>
     </div>
   </header>
 
+  <!-- ================= 처음 화면 ================= -->
+  <section id="homeView">
+    <div class="mode-grid">
+      <button class="card mode-card" id="goEdit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M5 3v13a2 2 0 0 0 2 2h13"/><path d="M19 21V8a2 2 0 0 0-2-2H4"/>
+          <line x1="3" y1="11" x2="21" y2="11" stroke-dasharray="2.5 2.5"/>
+        </svg>
+        <h2>편집</h2>
+        <p>길게 캡처한 이미지를 만화책 판형으로 재어 낱장으로 자릅니다. PDF 한 파일이나 낱장 이미지로 저장할 수 있어요.</p>
+        <span class="mode-go">이미지 자르기 →</span>
+      </button>
+      <button class="card mode-card" id="goLibrary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 6.5S9.5 4.5 4 4.5v13C9.5 17.5 12 19.5 12 19.5s2.5-2 8-2v-13c-5.5 0-8 2-8 2z"/><path d="M12 6.5v13"/>
+        </svg>
+        <h2>뷰어</h2>
+        <p>이미 잘라둔 만화를 만화책처럼 읽습니다. 폴더를 고르면 시리즈와 화를 알아서 정리하고, 한 화가 끝나면 다음 화로 이어집니다.</p>
+        <span class="mode-go">만화 고르기 →</span>
+      </button>
+    </div>
+    <p class="home-note">이미지는 기기 밖으로 나가지 않습니다. 전부 브라우저 안에서 처리돼요.</p>
+  </section>
+
+  <!-- ================= 편집 ================= -->
+  <section id="editView" hidden>
   <div class="layout">
     <aside class="rail" id="rail" hidden>
       <div class="card panel">
@@ -157,23 +184,108 @@
       </section>
     </main>
   </div>
+  </section>
 
+  <!-- ================= 뷰어 · 라이브러리 ================= -->
+  <section id="libView" hidden>
+    <div class="card panel source-panel">
+      <h2>만화 불러오기</h2>
+      <div class="source-actions">
+        <button class="btn btn-primary" id="pickFolderBtn">폴더 선택</button>
+        <button class="btn btn-ghost" id="pickFilesBtn">이미지 여러 개 선택</button>
+        <button class="btn btn-ghost" id="resumeBtn" hidden></button>
+        <button class="btn btn-ghost" id="ghToggle" aria-expanded="false">GitHub 저장소</button>
+      </div>
+      <p class="hint">시리즈 폴더 안에 화 폴더가 있고 그 안에 페이지 이미지가 있는 구조면 그대로 알아봅니다. 한 화 폴더만 골라도 됩니다.</p>
+      <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
+      <input type="file" id="filesInput" accept="image/*" multiple hidden>
+
+      <div class="gh-panel" id="ghPanel" hidden>
+        <div id="ghForm">
+          <div class="field two-col">
+            <div>
+              <div class="field-row"><label for="ghOwner">소유자</label></div>
+              <input type="text" id="ghOwner" placeholder="사용자명" autocomplete="off">
+            </div>
+            <div>
+              <div class="field-row"><label for="ghRepo">저장소</label></div>
+              <input type="text" id="ghRepo" placeholder="my-comics" autocomplete="off">
+            </div>
+          </div>
+          <div class="field two-col">
+            <div>
+              <div class="field-row"><label for="ghBranch">브랜치</label></div>
+              <input type="text" id="ghBranch" placeholder="main" autocomplete="off">
+            </div>
+            <div>
+              <div class="field-row"><label for="ghPath">하위 경로</label></div>
+              <input type="text" id="ghPath" placeholder="(전체)" autocomplete="off">
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-row"><label for="ghToken">액세스 토큰</label></div>
+            <input type="password" id="ghToken" placeholder="github_pat_…" autocomplete="off">
+          </div>
+          <p class="hint">저장소 하나에 <strong>Contents: Read-only</strong> 권한만 준 fine-grained 토큰을 쓰세요. 토큰은 이 기기의 브라우저 저장소에만 남고 GitHub 외에는 어디로도 전송되지 않지만, 브라우저에 남는 자격 증명이라는 점은 알아두셔야 해요.</p>
+          <button class="btn btn-primary btn-block" id="ghConnectBtn" style="margin-top:10px;">연결</button>
+        </div>
+        <div id="ghConnected" hidden>
+          <p class="gh-where">연결됨 · <span class="mono" id="ghWhere"></span></p>
+          <div class="source-actions">
+            <button class="btn btn-ghost" id="ghReloadBtn">목록 새로고침</button>
+            <button class="btn btn-ghost" id="ghForgetBtn">연결 해제 · 캐시 삭제</button>
+          </div>
+        </div>
+      </div>
+      <p class="status-line" id="libStatus"></p>
+    </div>
+
+    <div class="card dropzone lib-empty" id="libEmpty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+      </svg>
+      <h3>읽을 만화를 골라주세요</h3>
+      <p>폴더를 고르면 시리즈와 화를 알아서 정리합니다</p>
+    </div>
+
+    <div id="libBody" hidden>
+      <div class="lib-head">
+        <nav class="crumbs" id="libCrumbs"></nav>
+        <span class="lib-source mono" id="libSource"></span>
+      </div>
+      <div class="series-grid" id="seriesGrid"></div>
+      <div class="chapter-list" id="chapterList" hidden></div>
+    </div>
+  </section>
+</div>
+
+<!-- ================= 읽기 ================= -->
 <div class="reader" id="reader" hidden>
   <div class="reader-bar">
     <button class="rbtn" id="rClose">✕ 닫기</button>
-    <span class="reader-count" id="rCount">1 / 1</span>
+    <span class="reader-count mono" id="rCount">1 / 1</span>
     <span class="reader-title" id="rTitle"></span>
+    <span class="reader-sub" id="rSub"></span>
     <span class="spacer"></span>
     <button class="rbtn" id="rSpread" title="한 쪽 / 두 쪽 보기">한 쪽</button>
     <button class="rbtn" id="rCover" title="첫 장을 단독 표지로" hidden>표지 단독</button>
     <button class="rbtn" id="rDir" title="읽는 방향">오른쪽 → 왼쪽</button>
     <button class="rbtn" id="rFit" aria-pressed="true" title="화면에 맞추기">화면 맞춤</button>
+    <button class="rbtn" id="rAnim" aria-pressed="true" title="책 넘기는 모션">넘김 켜짐</button>
   </div>
   <div class="reader-stage" id="rStage">
     <div class="reader-zone l" id="rZoneL"></div>
     <div class="reader-zone r" id="rZoneR"></div>
-    <canvas id="rCanvas"></canvas>
-    <div class="reader-hint" id="rHint">좌우를 누르거나 ← → 키로 넘기세요 · Esc로 닫기</div>
+    <div class="book" id="rBook">
+      <canvas id="rCanvas"></canvas>
+      <canvas class="flip-hold" id="rFlipHold" hidden></canvas>
+      <div class="flip" id="rFlip" hidden>
+        <canvas class="flip-face front" id="rFlipFront"></canvas>
+        <canvas class="flip-face back" id="rFlipBack"></canvas>
+      </div>
+    </div>
+    <div class="reader-busy" id="rBusy" hidden><span class="spinner"></span></div>
+    <div class="reader-hint" id="rHint"></div>
   </div>
   <div class="reader-progress"><i id="rBar" style="width:0%"></i></div>
 </div>

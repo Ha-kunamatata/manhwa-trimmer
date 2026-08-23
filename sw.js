@@ -1,5 +1,5 @@
 /* Offline shell for the installed app. Bump CACHE when assets change. */
-const CACHE = "manhwa-trimmer-v1";
+const CACHE = "manhwa-trimmer-v2";
 const ASSETS = [
   "./",
   "./index.html",
@@ -7,12 +7,23 @@ const ASSETS = [
   "./src/styles.css",
   "./src/main.js",
   "./src/ui/app.js",
+  "./src/ui/editor.js",
+  "./src/ui/reader.js",
+  "./src/ui/library.js",
+  "./src/ui/sources.js",
+  "./src/ui/github.js",
   "./src/core/analysis.js",
   "./src/core/geometry.js",
+  "./src/core/naming.js",
   "./src/core/pdf.js",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];
+
+/* Pages downloaded from a repository live in their own cache and are keyed by
+   content hash, so they outlive any number of app updates. Sweeping every other
+   cache on activate would throw away a library the user waited to download. */
+const KEEP = ["manhwa-github-blobs"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -21,7 +32,8 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(
+        keys.filter((k) => k !== CACHE && KEEP.indexOf(k) < 0).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

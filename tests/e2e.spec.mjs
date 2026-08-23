@@ -1,8 +1,19 @@
 import { test, expect } from "@playwright/test";
 import { makePng } from "./fixtures.mjs";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+/**
+ * Fixtures are written per worker.
+ *
+ * This file is evaluated once in every Playwright worker, so a shared path means
+ * eight processes writing the same PNGs while the browser is reading them. That
+ * hands the decoder a half-written file, which surfaces as a page that will not
+ * render — a fixture bug wearing an application bug's clothes.
+ */
+const WORKER = process.env.TEST_PARALLEL_INDEX ?? "0";
+const FIXTURES = join(tmpdir(), "manhwa-trimmer-tests", "w" + WORKER);
 
 /** A capture that looks like the real thing: colour ad banners, side margins,
  *  a grayscale comic column of 9 pages with panels and margins between them. */
@@ -27,22 +38,58 @@ function buildStrip() {
       rect((i * W) / 6, H - BOT + 20, ((i + 1) * W) / 6, H - 30, [190 + i * 9, 70 + i * 18, 120 + i * 20]);
     rect(0, H - 26, W, H, [30, 30, 34]);                   // footer
   });
-  const dir = join(tmpdir(), "manhwa-trimmer-tests");
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, "strip.png");
+  mkdirSync(FIXTURES, { recursive: true });
+  const file = join(FIXTURES, "strip.png");
   writeFileSync(file, png);
   return { file, pages: PAGES };
 }
 
+/** A small library on disk: two series, two chapters each, three pages a chapter. */
+function buildLibraryTree() {
+  const root = join(FIXTURES, "library");
+  const plan = { 원피스: ["001화", "002화"], 나루토: ["001화"] };
+  for (const [series, chapters] of Object.entries(plan)) {
+    for (const ch of chapters) {
+      const dir = join(root, series, ch);
+      mkdirSync(dir, { recursive: true });
+      for (let p = 1; p <= 3; p++) {
+        // portrait pages, each a different shade so a turn is visible
+        const png = makePng(300, 420, ({ rect }) => rect(0, 0, 300, 420, [60 + p * 40, 90, 120]));
+        writeFileSync(join(dir, `p${String(p).padStart(2, "0")}.png`), png);
+      }
+    }
+  }
+  return { root, series: 2, chapters: 2, pages: 3 };
+}
+
 const strip = buildStrip();
+const lib = buildLibraryTree();
 
 async function load(page) {
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
-  await page.goto("/index.html");
+  await page.goto("/index.html#/edit");
   await page.setInputFiles("#fileInput", strip.file);
   await page.waitForSelector("#results:not([hidden])", { timeout: 30_000 });
   await page.waitForTimeout(500);
+  return errors;
+}
+
+/** A wide window opens on a spread; pin it to one leaf so page counts are exact. */
+async function forceSingle(page) {
+  if ((await page.textContent("#rSpread")).trim() === "두 쪽") await page.click("#rSpread");
+  await expect(page.locator("#rSpread")).toHaveText("한 쪽");
+}
+
+async function loadLibrary(page) {
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  // the reader reports a failed step to the console rather than throwing, so a
+  // silent decode failure would otherwise look like the reader merely stalling
+  page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+  await page.goto("/index.html#/library");
+  await page.setInputFiles("#folderInput", lib.root);
+  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
   return errors;
 }
 
@@ -124,8 +171,100 @@ test("exports a PDF with one page per comic page", async ({ page }) => {
   expect(info.pages).toBe(strip.pages);
 });
 
+test("saving works on the hosted page, with no Claude host present", async ({ page }) => {
+  // nothing defines window.claude here — this is the plain deployed PWA, which
+  // is where the export half is actually used
+  await load(page);
+  const started = page.waitForEvent("download", { timeout: 60_000 });
+  await page.click("#downloadPdfBtn");
+  expect((await started).suggestedFilename()).toMatch(/\.pdf$/);
+});
+
 test("no horizontal overflow at any width", async ({ page }) => {
   await load(page);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
   expect(overflow).toBe(false);
+});
+
+test("the home screen routes to both halves and back", async ({ page }) => {
+  await page.goto("/index.html");
+  await expect(page.locator("#homeView")).toBeVisible();
+  await expect(page.locator("#editView")).toBeHidden();
+
+  await page.click("#goLibrary");
+  await expect(page.locator("#libView")).toBeVisible();
+  expect(page.url()).toContain("#/library");
+
+  await page.click("#backHome");
+  await expect(page.locator("#homeView")).toBeVisible();
+
+  await page.click("#goEdit");
+  await expect(page.locator("#editView")).toBeVisible();
+  await expect(page.locator("#dropzone")).toBeVisible();
+});
+
+test("a folder becomes series and chapters", async ({ page }) => {
+  const errors = await loadLibrary(page);
+  await expect(page.locator("#seriesGrid .series-card")).toHaveCount(lib.series);
+  // natural order, not string order
+  await expect(page.locator(".series-card .series-name").first()).toHaveText("나루토");
+
+  await page.locator(".series-card", { hasText: "원피스" }).click();
+  await expect(page.locator("#chapterList .chapter-row")).toHaveCount(lib.chapters);
+  await expect(page.locator(".chapter-row .ch-name").first()).toHaveText("001화");
+  expect(errors).toEqual([]);
+});
+
+test("reading a chapter runs on into the next one", async ({ page }) => {
+  const errors = await loadLibrary(page);
+  await page.locator(".series-card", { hasText: "원피스" }).click();
+  await page.locator(".chapter-row").first().click();
+
+  await expect(page.locator("#reader")).toBeVisible();
+  await expect(page.locator("#rSub")).toHaveText("001화");
+  await forceSingle(page);
+  await expect(page.locator("#rCount")).toContainText(`/ ${lib.pages}`);
+
+  // step off the end of chapter one and land at the start of chapter two
+  for (let i = 0; i < lib.pages; i++) await page.click("#rZoneL");
+  await expect(page.locator("#rSub")).toHaveText("002화");
+  await expect(page.locator("#rCount")).toContainText(`1 / ${lib.pages}`);
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#reader")).toBeHidden();
+
+  // the library remembers where reading stopped: the chapter is marked here,
+  // and the series carries a 이어보기 badge one level up
+  await expect(page.locator(".chapter-row.reading .ch-name")).toHaveText("002화");
+  await page.click(".crumb-back");
+  await expect(page.locator(".series-card", { hasText: "원피스" })).toContainText("이어보기");
+  expect(errors).toEqual([]);
+});
+
+test("the single-file artifact build runs", async ({ page }) => {
+  test.skip(!existsSync("dist/artifact.html"), "run npm run build first");
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await page.goto("/dist/artifact.html");
+  await expect(page.locator("#homeView")).toBeVisible();
+  await page.click("#goLibrary");
+  await expect(page.locator("#libView")).toBeVisible();
+  // nothing in an artifact can reach GitHub, so that door is not shown
+  await expect(page.locator("#ghToggle")).toBeHidden();
+  await expect(page.locator("#pickFolderBtn")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("the page turn leaves the right page on screen", async ({ page }) => {
+  await loadLibrary(page);
+  await page.locator(".series-card", { hasText: "나루토" }).click();
+  await page.locator(".chapter-row").first().click();
+  await forceSingle(page);
+  await expect(page.locator("#rCount")).toHaveText(`1 / ${lib.pages}`);
+
+  await page.click("#rZoneL");
+  await expect(page.locator("#rCount")).toHaveText(`2 / ${lib.pages}`);
+  // the turning sheet must be gone once it has landed
+  await expect(page.locator("#rFlip")).toBeHidden();
+  await expect(page.locator("#rCanvas")).toBeVisible();
 });

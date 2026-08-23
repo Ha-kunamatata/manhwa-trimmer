@@ -82,6 +82,12 @@
     margin-bottom:24px;
     border-bottom:1px solid var(--hairline);
   }
+  .back-home{
+    flex:none; width:32px; height:32px; border-radius:8px;
+    background:transparent; border:1px solid var(--hairline); color:var(--ink);
+    font-size:1.2rem; line-height:1; cursor:pointer; padding:0 0 3px;
+  }
+  .back-home:hover{border-color:var(--accent); color:var(--accent);}
   .mark{flex:none;}
   .brand h1{
     font-family:"Noto Serif KR", serif;
@@ -337,6 +343,84 @@
   }
   :root[data-theme="dark"] .toast, :root:not([data-theme="light"]) .toast{background:var(--surface-2); color:var(--ink); border:1px solid var(--hairline);}
 
+  /* ---- home ---- */
+  .mode-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
+    gap:16px;
+  }
+  .mode-card{
+    display:flex; flex-direction:column; align-items:flex-start; gap:9px;
+    padding:26px 24px 22px;
+    text-align:left; cursor:pointer;
+    font-family:inherit; color:var(--ink);
+    transition:border-color .15s ease, transform .15s ease;
+  }
+  .mode-card:hover{border-color:var(--accent); transform:translateY(-2px);}
+  .mode-card svg{width:30px; height:30px; color:var(--accent);}
+  .mode-card h2{font-family:"Noto Serif KR",serif; font-size:1.2rem; margin:2px 0 0;}
+  .mode-card p{margin:0; font-size:.85rem; color:var(--ink-soft); line-height:1.55;}
+  .mode-go{margin-top:6px; font-size:.82rem; font-weight:600; color:var(--accent);}
+  .home-note{
+    margin:22px 0 0; text-align:center;
+    font-size:.78rem; color:var(--ink-faint);
+  }
+
+  /* ---- library ---- */
+  .source-panel{margin-bottom:18px;}
+  .source-actions{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;}
+  .gh-panel{
+    margin-top:14px; padding-top:14px;
+    border-top:1px solid var(--hairline);
+  }
+  .gh-where{font-size:.83rem; margin:0 0 10px;}
+  .lib-empty{cursor:default; padding:44px 24px;}
+  .lib-head{
+    display:flex; align-items:center; justify-content:space-between;
+    gap:10px; flex-wrap:wrap; margin-bottom:14px;
+  }
+  .crumbs{display:flex; align-items:center; gap:9px; flex-wrap:wrap;}
+  .crumb-back{
+    background:transparent; border:1px solid var(--hairline); color:var(--ink);
+    border-radius:6px; padding:5px 10px; font-family:inherit; font-size:.8rem; cursor:pointer;
+  }
+  .crumb-back:hover{border-color:var(--accent); color:var(--accent);}
+  .crumb-here{font-family:"Noto Serif KR",serif; font-size:1.05rem; font-weight:700;}
+  .lib-source{font-size:.75rem; color:var(--ink-faint);}
+
+  .series-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(190px, 1fr));
+    gap:12px;
+  }
+  .series-card{
+    display:flex; flex-direction:column; gap:4px; align-items:flex-start;
+    padding:16px 16px 14px; text-align:left; cursor:pointer;
+    font-family:inherit; color:var(--ink);
+    transition:border-color .15s ease;
+  }
+  .series-card:hover{border-color:var(--accent);}
+  .series-name{font-family:"Noto Serif KR",serif; font-weight:700; font-size:.98rem; line-height:1.35;}
+  .series-meta{font-size:.74rem; color:var(--ink-faint);}
+  .series-mark{
+    margin-top:5px; font-size:.72rem; color:var(--accent);
+    background:var(--accent-soft); border-radius:5px; padding:2px 7px;
+  }
+
+  .chapter-list{display:flex; flex-direction:column; gap:1px;}
+  .chapter-row{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:12px 14px; cursor:pointer; text-align:left;
+    background:var(--surface); border:1px solid var(--hairline);
+    font-family:inherit; color:var(--ink); font-size:.88rem;
+  }
+  .chapter-row:first-child{border-radius:var(--radius) var(--radius) 0 0;}
+  .chapter-row:last-child{border-radius:0 0 var(--radius) var(--radius);}
+  .chapter-row + .chapter-row{border-top:none;}
+  .chapter-row:hover{background:var(--surface-2);}
+  .chapter-row.reading{border-left:3px solid var(--accent);}
+  .ch-pages{font-size:.75rem; color:var(--ink-faint);}
+
   /* ---- reader ---- */
   .reader{
     position:fixed; inset:0; z-index:100;
@@ -364,9 +448,40 @@
     display:flex; align-items:flex-start; justify-content:center;
     -webkit-overflow-scrolling:touch;
   }
-  .reader-stage canvas{display:block; margin:auto; box-shadow:0 0 30px rgba(0,0,0,.6);}
   .reader-zone{position:absolute; top:0; bottom:0; width:38%; cursor:pointer; z-index:2;}
   .reader-zone.l{left:0;} .reader-zone.r{right:0;}
+
+  /* the book, and the sheet that turns over it.
+     perspective must sit on the parent of the rotating element, not on the
+     element itself, or the turn reads flat */
+  .book{
+    position:relative; margin:auto; flex:none;
+    perspective:2200px;
+    box-shadow:0 0 30px rgba(0,0,0,.6);
+  }
+  .book > canvas{display:block;}
+  .flip-hold{
+    position:absolute; top:0; z-index:1;
+  }
+  .flip{
+    position:absolute; top:0; z-index:2;
+    transform-style:preserve-3d;
+    will-change:transform;
+  }
+  .flip-face{
+    position:absolute; inset:0;
+    width:100%; height:100%;
+    backface-visibility:hidden;
+    -webkit-backface-visibility:hidden;
+  }
+  .flip-face.back{transform:rotateY(180deg);}
+  .reader-busy{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    z-index:4; background:rgba(0,0,0,.6); border-radius:50%; padding:14px;
+    display:flex;
+  }
+  .reader-busy .spinner{border-color:rgba(255,255,255,.25); border-top-color:var(--accent);}
+  .reader-sub{font-size:.78rem; color:#8d8a82; max-width:22ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .reader-progress{
     flex:none; height:3px; background:rgba(255,255,255,.10);
   }
@@ -378,7 +493,7 @@
     transition:opacity .4s ease; z-index:3;
   }
   @media (max-width:600px){
-    .reader-title{display:none;}
+    .reader-title, .reader-sub{display:none;}
     .reader-bar{padding:7px 10px; gap:8px;}
     .rbtn{padding:5px 9px; font-size:.75rem;}
   }

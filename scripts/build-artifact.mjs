@@ -59,6 +59,10 @@ ${body}
 <script>
 (function(){
 "use strict";
+// An artifact is sandboxed against outside requests, so the half of the app
+// that reads from a repository cannot work here. The shell hides it.
+window.__manhwaArtifact = true;
+
 ${chunks.join("\n\n")}
 
 initApp();

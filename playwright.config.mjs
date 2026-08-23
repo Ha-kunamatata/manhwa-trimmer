@@ -17,7 +17,8 @@ export default defineConfig({
     launchOptions
   },
   webServer: {
-    command: "python3 -m http.server 8080",
+    // Windows ships a `python3` shim that answers --version and does nothing else
+    command: (process.platform === "win32" ? "python" : "python3") + " -m http.server 8080",
     url: "http://127.0.0.1:8080/index.html",
     reuseExistingServer: !process.env.CI,
     timeout: 30_000
