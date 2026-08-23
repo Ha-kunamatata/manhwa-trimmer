@@ -634,3 +634,26 @@ test("a repository too big to list says what to do about it", async ({ page }) =
   await connectRepo(page);
   await expect(page.locator(".toast")).toContainText("하위 경로");
 });
+
+/**
+ * The one thing a mock cannot prove: that the request leaves the browser and
+ * comes back readable.
+ *
+ * A deliberately wrong token is enough. Reaching "토큰이 거부됐어요" means the
+ * preflight was accepted, the request was sent, and the 401 could be READ —
+ * which is exactly what a CORS failure would prevent. Had CORS blocked it,
+ * fetch would have thrown a TypeError and the message would be the generic one.
+ *
+ * Off by default: the suite stays hermetic and does not fail when GitHub does.
+ * Run it with LIVE_GITHUB=1.
+ */
+test("the request really reaches GitHub and the answer comes back", async ({ page }) => {
+  test.skip(!process.env.LIVE_GITHUB, "set LIVE_GITHUB=1 to talk to the real API");
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await page.goto("/index.html#/library");
+  await connectRepo(page, "github_pat_11ABCDEF_thisIsNotARealToken");
+  await expect(page.locator(".toast")).toContainText("토큰이 거부됐어요", { timeout: 30_000 });
+  await expect(page.locator("#ghForm")).toBeVisible();
+  expect(errors).toEqual([]);
+});
