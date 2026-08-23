@@ -186,8 +186,10 @@ export function createLibrary(els, openReader, toast) {
   // ---------- GitHub ----------
   githubPanel(els, toast, async (provider) => {
     busy("저장소를 읽는 중…");
+    // the failure has to reach the panel, not stop here: swallowing it let a
+    // rejected token be saved and shown as connected while nothing had loaded
     try { await adopt(await provider.entries(), provider.label); }
-    catch (err) { busy(null); toast(err.message || "저장소를 읽지 못했어요."); }
+    finally { busy(null); }
   });
 
   // ---------- browsing ----------

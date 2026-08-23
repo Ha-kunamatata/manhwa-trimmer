@@ -507,3 +507,130 @@ test("continuous scrolling stacks the pages down the screen", async ({ page }) =
   await expect(page.locator("#rBook")).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+// ---------- reading from a repository ----------
+
+/**
+ * Stand in for GitHub.
+ *
+ * The shapes here were checked against the real API before being written down:
+ * a tree lists `{path, sha, type}` with a `truncated` flag, and a blob fetched
+ * with the raw Accept header comes back as the file's own bytes. Faking it is
+ * what makes this path testable at all — the real one needs a credential no
+ * test can carry.
+ */
+function fakeRepo(page, { files, onRequest }) {
+  const shaFor = (p) => "sha-" + p.replace(/[^a-z0-9]/gi, "-");
+  return page.route("https://api.github.com/**", async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (onRequest) onRequest({ url, headers: req.headers() });
+
+    if (url.includes("/git/trees/")) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          truncated: false,
+          tree: files.map((p) => ({ path: p, sha: shaFor(p), type: "blob", mode: "100644" }))
+            .concat([{ path: "만화", sha: "sha-dir", type: "tree", mode: "040000" }])
+        })
+      });
+    }
+    if (url.includes("/git/blobs/")) {
+      const p = files.find((f) => url.endsWith(shaFor(f)));
+      if (!p) return route.fulfill({ status: 404, body: "{}" });
+      const shade = 40 + (files.indexOf(p) * 37) % 180;
+      return route.fulfill({
+        status: 200,
+        contentType: "image/png",
+        body: makePng(300, 420, ({ rect }) => rect(0, 0, 300, 420, [shade, 90, 130]))
+      });
+    }
+    return route.fulfill({ status: 404, body: "{}" });
+  });
+}
+
+async function connectRepo(page, token = "github_pat_test") {
+  await page.click("#ghToggle");
+  await expect(page.locator("#ghPanel")).toBeVisible();
+  await page.fill("#ghOwner", "someone");
+  await page.fill("#ghRepo", "my-comics");
+  await page.fill("#ghToken", token);
+  await page.click("#ghConnectBtn");
+}
+
+test("a repository becomes a library, and its pages are read", async ({ page }) => {
+  const seen = [];
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+  await fakeRepo(page, {
+    files: [
+      "만화/원피스/001화/p01.png", "만화/원피스/001화/p02.png",
+      "만화/원피스/002화/p01.png", "만화/나루토/001화/p01.png",
+      "만화/원피스/001화/readme.txt"          // not an image; must be ignored
+    ],
+    onRequest: (r) => seen.push(r)
+  });
+
+  await page.goto("/index.html#/library");
+  await connectRepo(page);
+
+  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
+  await expect(page.locator("#seriesGrid .series-card")).toHaveCount(2);
+  await expect(page.locator("#ghConnected")).toBeVisible();
+  await expect(page.locator("#ghWhere")).toHaveText("someone/my-comics");
+
+  // the token travels as a bearer, and pages are asked for as raw bytes
+  const tree = seen.find((r) => r.url.includes("/git/trees/"));
+  expect(tree.headers.authorization).toBe("Bearer github_pat_test");
+  expect(tree.url).toContain("recursive=1");
+
+  await page.locator(".series-card", { hasText: "원피스" }).click();
+  await expect(page.locator("#chapterList .chapter-row")).toHaveCount(2);
+  await page.locator(".chapter-row").first().click();
+  await expect(page.locator("#reader")).toBeVisible({ timeout: 30_000 });
+  await forceSingle(page);
+  await expect(page.locator("#rCount")).toHaveText("1 / 2");
+
+  const blob = seen.find((r) => r.url.includes("/git/blobs/"));
+  expect(blob.headers.accept).toBe("application/vnd.github.raw");
+  expect(errors).toEqual([]);
+});
+
+test("a scoped path keeps the folder it names", async ({ page }) => {
+  await fakeRepo(page, { files: ["comics/원피스/001화/p01.png", "other/junk.png"] });
+  await page.goto("/index.html#/library");
+  await page.click("#ghToggle");
+  await page.fill("#ghOwner", "someone");
+  await page.fill("#ghRepo", "my-comics");
+  await page.fill("#ghPath", "comics/원피스");
+  await page.fill("#ghToken", "t");
+  await page.click("#ghConnectBtn");
+
+  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
+  // scoping to a series folder must not lose that folder's name
+  await expect(page.locator("#seriesGrid .series-card")).toHaveCount(1);
+  await expect(page.locator(".series-card .series-name")).toHaveText("원피스");
+});
+
+test("a rejected token says so instead of failing silently", async ({ page }) => {
+  await page.route("https://api.github.com/**", (route) =>
+    route.fulfill({ status: 401, contentType: "application/json", body: "{}" }));
+  await page.goto("/index.html#/library");
+  await connectRepo(page, "wrong");
+  await expect(page.locator(".toast")).toContainText("토큰");
+  await expect(page.locator("#ghForm")).toBeVisible();      // still asking
+});
+
+test("a repository too big to list says what to do about it", async ({ page }) => {
+  await page.route("https://api.github.com/**", (route) =>
+    route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ truncated: true, tree: [] })
+    }));
+  await page.goto("/index.html#/library");
+  await connectRepo(page);
+  await expect(page.locator(".toast")).toContainText("하위 경로");
+});
