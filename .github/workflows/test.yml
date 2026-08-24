@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# 이 워크플로는 읽기만 하면 된다. 기본값에 기대지 않고 못박아 둔다 — 이 계정에는
+# 업무용 저장소가 함께 있고, 취미 프로젝트의 자동화가 가진 권한은 좁을수록 좋다.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
