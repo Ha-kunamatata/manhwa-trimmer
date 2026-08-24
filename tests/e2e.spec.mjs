@@ -836,3 +836,25 @@ test("a bad name with a dead token falls back to the plain message", async ({ pa
   await connectRepo(page);
   await expect(page.locator(".toast")).toContainText("저장소 이름을 확인");
 });
+
+test("connecting says what it found, so a wrong repository is obvious", async ({ page }) => {
+  await fakeRepo(page, {
+    // what the app's own source repository looks like: a few icons, no comics
+    files: ["icons/icon-192.png", "icons/icon-512.png"]
+  });
+  await page.goto("/index.html#/library");
+  await connectRepo(page);
+  // the app's own repository holds icons, not comics — and now it says so
+  await expect(page.locator(".toast")).toContainText("icons");
+
+  // and switching away keeps the token instead of forcing a disconnect
+  await page.click("#ghSwitchBtn");
+  // one reachable repository, so it asks for an address rather than a choice
+  await expect(page.locator("#ghManual")).toBeVisible();
+  await expect(page.locator("#ghForm")).toBeHidden();
+});
+
+test("a folder load reports its size too", async ({ page }) => {
+  await loadLibrary(page);
+  await expect(page.locator(".toast")).toContainText("시리즈");
+});

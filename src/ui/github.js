@@ -239,6 +239,33 @@ export function githubPanel(els, toast, onConnect) {
     catch (err) { toast(err.message || "저장소를 읽지 못했어요."); }
   });
 
+  /**
+   * Go back to choosing, keeping the token and the downloaded pages.
+   *
+   * Picking the wrong repository is easy — an account can hold one named for
+   * the app and another for the comics. Making that mistake cost a disconnect,
+   * which also threw away every page already fetched, so the cheap error had an
+   * expensive undo.
+   */
+  els.ghSwitchBtn.addEventListener("click", async () => {
+    const conf = loadConf();
+    if (!conf) { screen("form"); return; }
+    pending = conf.token;
+    els.ghSwitchBtn.disabled = true;
+    try {
+      const repos = await listRepos(conf.token);
+      if (repos.length > 1) offer(repos);
+      else {
+        els.ghManualWhy.textContent = "읽을 저장소 주소를 넣어주세요.";
+        screen("manual");
+      }
+    } catch (err) {
+      toast(err.message || "저장소 목록을 읽지 못했어요.");
+    } finally {
+      els.ghSwitchBtn.disabled = false;
+    }
+  });
+
   els.ghForgetBtn.addEventListener("click", async () => {
     clearConf();
     try { await caches.delete(CACHE); } catch (e) {}

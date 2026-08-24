@@ -53,6 +53,21 @@ export function createLibrary(els, openReader, toast) {
     stripMode = first ? await probeIsStrip(first) : false;
     if (stripMode) series = regroupAsStrips(series);
     render();
+    announce();
+  }
+
+  /**
+   * Say what was found.
+   *
+   * Silence after a successful load is what let somebody connect to the wrong
+   * repository and sit there wondering. "1개 시리즈 · 4화" next to a repository
+   * named after the app answers the question before it gets asked.
+   */
+  function announce() {
+    const chapters = series.reduce((n, s) => n + s.chapters.length, 0);
+    toast(series.length === 1
+      ? series[0].name + " · " + chapters + "화를 찾았어요."
+      : series.length + "개 시리즈 · " + chapters + "화를 찾았어요.");
   }
 
   /**

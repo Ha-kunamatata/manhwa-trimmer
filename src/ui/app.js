@@ -117,7 +117,8 @@ export function initApp() {
     ghPick: $("#ghPick"), ghPickList: $("#ghPickList"), ghPickBack: $("#ghPickBack"),
     ghManual: $("#ghManual"), ghRepo: $("#ghRepo"),
     ghManualBtn: $("#ghManualBtn"), ghManualWhy: $("#ghManualWhy"),
-    ghReloadBtn: $("#ghReloadBtn"), ghForgetBtn: $("#ghForgetBtn")
+    ghReloadBtn: $("#ghReloadBtn"), ghSwitchBtn: $("#ghSwitchBtn"),
+    ghForgetBtn: $("#ghForgetBtn")
   }, openReader, toast);
 
   routeFromHash();
