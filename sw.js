@@ -1,5 +1,5 @@
 /* Offline shell for the installed app. Bump CACHE when assets change. */
-const CACHE = "manhwagyeong-v5";
+const CACHE = "manhwagyeong-v6";
 const ASSETS = [
   "./",
   "./index.html",

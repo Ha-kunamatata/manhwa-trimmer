@@ -386,6 +386,20 @@
   .repo-row:last-child{border-radius:0 0 7px 7px;}
   .repo-row + .repo-row{border-top:none;}
   .repo-row:hover{background:var(--surface-2); border-color:var(--accent);}
+  .repo-row.on{color:var(--accent); border-color:var(--accent);}
+  .repo-row[disabled]{opacity:.5; cursor:progress;}
+  /* connected repositories: a name and a way to drop it */
+  .repo-lines{display:flex; flex-direction:column; gap:6px; margin-bottom:12px;}
+  .repo-line{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:8px 11px; border:1px solid var(--hairline); border-radius:7px;
+    background:var(--surface); font-size:.82rem;
+  }
+  .repo-drop{
+    flex:none; width:24px; height:24px; line-height:1; border-radius:6px; cursor:pointer;
+    background:transparent; border:1px solid transparent; color:var(--ink-soft); font-size:1rem;
+  }
+  .repo-drop:hover{border-color:var(--danger,#c2554a); color:var(--danger,#c2554a);}
   .lib-empty{cursor:default; padding:44px 24px;}
   .lib-head{
     display:flex; align-items:center; justify-content:space-between;

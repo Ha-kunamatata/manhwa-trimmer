@@ -113,12 +113,13 @@ export function initApp() {
     resumeBtn: $("#resumeBtn"),
     folderInput: $("#folderInput"), filesInput: $("#filesInput"),
     ghToggle: $("#ghToggle"), ghPanel: $("#ghPanel"), ghForm: $("#ghForm"),
-    ghConnected: $("#ghConnected"), ghWhere: $("#ghWhere"),
+    ghConnected: $("#ghConnected"), ghRepoList: $("#ghRepoList"),
     ghToken: $("#ghToken"), ghConnectBtn: $("#ghConnectBtn"),
-    ghPick: $("#ghPick"), ghPickList: $("#ghPickList"), ghPickBack: $("#ghPickBack"), ghPickManual: $("#ghPickManual"),
+    ghPick: $("#ghPick"), ghPickList: $("#ghPickList"), ghPickBack: $("#ghPickBack"),
+    ghPickManual: $("#ghPickManual"), ghPickDone: $("#ghPickDone"),
     ghManual: $("#ghManual"), ghRepo: $("#ghRepo"),
     ghManualBtn: $("#ghManualBtn"), ghManualWhy: $("#ghManualWhy"),
-    ghReloadBtn: $("#ghReloadBtn"), ghSwitchBtn: $("#ghSwitchBtn"),
+    ghReloadBtn: $("#ghReloadBtn"), ghAddBtn: $("#ghAddBtn"),
     ghForgetBtn: $("#ghForgetBtn")
   }, openReader, toast);
 

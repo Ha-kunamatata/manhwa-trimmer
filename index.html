@@ -213,12 +213,13 @@
         </div>
 
         <div id="ghPick" hidden>
-          <p class="gh-where">어느 저장소를 읽을까요?</p>
+          <p class="gh-where">읽을 저장소를 고르세요 <span class="hint">— 여러 개 골라도 됩니다</span></p>
           <div class="repo-list" id="ghPickList"></div>
           <p class="hint">찾는 저장소가 없나요? 토큰에 그 저장소가 포함되지 않은 거예요.
             <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">토큰 설정</a>에서
             <strong>Repository access</strong>에 추가하고 다시 연결하세요.</p>
           <div class="source-actions" style="margin-top:10px;">
+            <button class="btn btn-primary" id="ghPickDone" hidden>다 골랐어요</button>
             <button class="btn btn-ghost" id="ghPickManual">주소 직접 넣기</button>
             <button class="btn btn-ghost" id="ghPickBack">뒤로</button>
           </div>
@@ -234,12 +235,14 @@
         </div>
 
         <div id="ghConnected" hidden>
-          <p class="gh-where">연결됨 · <span class="mono" id="ghWhere"></span></p>
+          <p class="gh-where">연결된 저장소</p>
+          <div class="repo-lines" id="ghRepoList"></div>
           <div class="source-actions">
+            <button class="btn btn-ghost" id="ghAddBtn">저장소 추가</button>
             <button class="btn btn-ghost" id="ghReloadBtn">목록 새로고침</button>
-            <button class="btn btn-ghost" id="ghSwitchBtn">다른 저장소</button>
             <button class="btn btn-ghost" id="ghForgetBtn">연결 해제 · 캐시 삭제</button>
           </div>
+          <p class="hint">저장소 하나가 커지면 시리즈별로 나눠 올리고 여기에 모두 더하세요. GitHub의 용량 권장(1GB)은 <strong>저장소 하나당</strong>이라, 나눠 담으면 서재는 계속 늘릴 수 있습니다. 여러 저장소를 연결해도 서재 하나로 보입니다.</p>
         </div>
       </div>
       <p class="status-line" id="libStatus"></p>

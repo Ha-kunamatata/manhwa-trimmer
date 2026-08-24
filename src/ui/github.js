@@ -10,8 +10,13 @@
  * cached page can never be stale, and the Cache API entry needs no expiry.
  *
  * The token is a fine-grained personal access token with read-only Contents on
- * the one repository, kept in localStorage. That is device-local, but it is
- * still a credential sitting in a browser — the panel says so.
+ * the repositories, kept in localStorage. That is device-local, but it is still
+ * a credential sitting in a browser — the panel says so.
+ *
+ * Several repositories can be read at once. GitHub's size guidance is per
+ * repository, not per account, so a growing library is meant to spread across
+ * repositories — and a reader who has to disconnect and reconnect to change
+ * series would feel that split as a chore. The shelf merges them instead.
  */
 
 const API = "https://api.github.com";
@@ -19,7 +24,48 @@ const CACHE = "manhwa-github-blobs";
 const CONF_KEY = "manhwa-github";
 
 export function loadConf() {
-  try { return JSON.parse(localStorage.getItem(CONF_KEY) || "null"); } catch (e) { return null; }
+  try { return normalise(JSON.parse(localStorage.getItem(CONF_KEY) || "null")); }
+  catch (e) { return null; }
+}
+
+/**
+ * One shape for one repository and for many.
+ *
+ * Settings saved before the shelf could merge repositories name a single
+ * `owner`/`repo` at the top level. Reading those back as a one-item list keeps
+ * an existing install connected across the update instead of silently emptying
+ * its shelf.
+ */
+export function normalise(conf) {
+  if (!conf || !conf.token) return null;
+  const repos = Array.isArray(conf.repos) && conf.repos.length
+    ? conf.repos
+    : (conf.owner && conf.repo ? [{ owner: conf.owner, repo: conf.repo,
+                                    branch: conf.branch, path: conf.path }] : []);
+  const seen = new Set();
+  const unique = [];
+  for (const r of repos) {
+    if (!r || !r.owner || !r.repo) continue;
+    const key = (r.owner + "/" + r.repo).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push({ owner: r.owner, repo: r.repo, branch: r.branch || "", path: r.path || "" });
+  }
+  return unique.length ? { token: conf.token, repos: unique } : null;
+}
+
+/** Add a repository to a connection, or start one. Never duplicates. */
+export function withRepo(conf, where, token) {
+  const base = conf && conf.token ? conf : { token, repos: [] };
+  return normalise({ token: base.token || token, repos: [...(base.repos || []), where] });
+}
+
+export function withoutRepo(conf, where) {
+  const key = (where.owner + "/" + where.repo).toLowerCase();
+  return normalise({
+    ...conf,
+    repos: (conf.repos || []).filter((r) => (r.owner + "/" + r.repo).toLowerCase() !== key)
+  });
 }
 function saveConf(conf) {
   try { localStorage.setItem(CONF_KEY, JSON.stringify(conf)); } catch (e) {}
@@ -93,28 +139,67 @@ async function loadBlob(conf, sha) {
   return blob;
 }
 
+/** Everything one repository needs: the shared token plus where to look. */
+const siteOf = (conf, r) => ({ token: conf.token, owner: r.owner, repo: r.repo,
+                               branch: r.branch, path: r.path });
+
+export const repoLabel = (r) => {
+  const scope = (r.path || "").replace(/^\/+|\/+$/g, "");
+  return r.owner + "/" + r.repo + (scope ? "/" + scope : "");
+};
+
+/** One repository's blobs, as paths the library can name things from. */
+async function repoEntries(site, prefix) {
+  const scope = (site.path || "").replace(/^\/+|\/+$/g, "");
+  const ref = site.branch || "HEAD";
+  const res = await api(site,
+    `${API}/repos/${site.owner}/${site.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
+  const tree = await res.json();
+  if (tree.truncated) {
+    throw new Error(site.repo + " 저장소가 너무 커서 목록이 잘렸어요. 하위 경로를 지정해 주세요.");
+  }
+  return (tree.tree || [])
+    .filter((n) => n.type === "blob")
+    .filter((n) => !scope || n.path === scope || n.path.startsWith(scope + "/"))
+    .map((n) => ({
+      // keep the scope folder's own name so it can title an unnamed series
+      path: prefix + (scope ? n.path.slice(scope.lastIndexOf("/") + 1) : n.path),
+      load: () => loadBlob(site, n.sha)
+    }));
+}
+
+/**
+ * A page source over one or more repositories.
+ *
+ * With more than one, every path gains its repository's name in front. That is
+ * not decoration: the library reads a series from the folder above a chapter,
+ * so two repositories each holding one series at their root would otherwise
+ * both come out unnamed and merge into one. The repository name is also the
+ * most honest series title available in that case.
+ *
+ * A repository that cannot be read does not empty the shelf. It is reported in
+ * `notes` and the rest still loads — a token whose access to one of five
+ * repositories lapsed should cost one series, not the library.
+ */
 export function createGithubProvider(conf) {
-  const scope = (conf.path || "").replace(/^\/+|\/+$/g, "");
-  return {
-    label: conf.owner + "/" + conf.repo + (scope ? "/" + scope : ""),
+  const c = normalise(conf);
+  if (!c) throw new Error("연결 정보가 비어 있어요.");
+  const many = c.repos.length > 1;
+  const provider = {
+    label: many ? "저장소 " + c.repos.length + "곳" : repoLabel(c.repos[0]),
+    notes: [],
     async entries() {
-      const ref = conf.branch || "HEAD";
-      const res = await api(conf,
-        `${API}/repos/${conf.owner}/${conf.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
-      const tree = await res.json();
-      if (tree.truncated) {
-        throw new Error("저장소가 너무 커서 목록이 잘렸어요. 하위 경로를 지정해 주세요.");
-      }
-      return (tree.tree || [])
-        .filter((n) => n.type === "blob")
-        .filter((n) => !scope || n.path === scope || n.path.startsWith(scope + "/"))
-        .map((n) => ({
-          // keep the scope folder's own name so it can title an unnamed series
-          path: scope ? n.path.slice(scope.lastIndexOf("/") + 1) : n.path,
-          load: () => loadBlob(conf, n.sha)
-        }));
+      const results = await Promise.all(c.repos.map((r) =>
+        repoEntries(siteOf(c, r), many ? r.repo + "/" : "")
+          .then((list) => ({ list }), (err) => ({ err, r }))));
+      provider.notes = results.filter((x) => x.err)
+        .map((x) => repoLabel(x.r) + " — " + (x.err.message || "읽지 못했어요."));
+      const ok = results.filter((x) => x.list);
+      if (!ok.length) throw results[0].err;   // nothing readable: this is a failure
+      return ok.flatMap((x) => x.list);
     }
   };
+  return provider;
 }
 
 /**
@@ -153,14 +238,19 @@ export function parseRepo(text) {
  * Wire the connect / disconnect panel.
  *
  * One field: the token. Everything the old form asked for is either derivable
- * (the repository, from what the token can reach) or almost never needed (a
+ * (the repositories, from what the token can reach) or almost never needed (a
  * branch other than the default, a sub-folder). Asking for five things to read
  * one folder of comics was the wrong trade.
+ *
+ * Repositories are added and removed rather than swapped. A library outgrows
+ * one repository long before it outgrows a token, and switching between them to
+ * read is not something a reader should have to think about.
  *
  * Calls `onConnect(provider)` when there is something to read.
  */
 export function githubPanel(els, toast, onConnect) {
   let pending = "";                     // the token being tried, before it is saved
+  let known = [];                       // repositories the token listed, if it could
 
   function screen(which) {
     els.ghForm.hidden = which !== "form";
@@ -170,17 +260,58 @@ export function githubPanel(els, toast, onConnect) {
   }
 
   function showConnected(conf) {
-    if (conf) els.ghWhere.textContent = createGithubProvider(conf).label;
-    screen(conf ? "connected" : "form");
+    if (!conf) { screen("form"); return; }
+    els.ghRepoList.innerHTML = "";
+    for (const r of conf.repos) {
+      const row = document.createElement("div");
+      row.className = "repo-line";
+      const name = document.createElement("span");
+      name.className = "mono";
+      name.textContent = repoLabel(r);
+      const drop = document.createElement("button");
+      drop.className = "repo-drop";
+      drop.type = "button";
+      drop.title = "이 저장소 빼기";
+      drop.setAttribute("aria-label", repoLabel(r) + " 빼기");
+      drop.textContent = "×";
+      drop.addEventListener("click", () => remove(r));
+      row.append(name, drop);
+      els.ghRepoList.appendChild(row);
+    }
+    screen("connected");
   }
 
-  /** Try one repository; on success remember it and hand it to the library. */
-  async function connect(conf) {
+  /** Read the whole connection; on success remember it. Reports partial gaps. */
+  async function apply(conf, { keepScreen } = {}) {
     const provider = createGithubProvider(conf);
-    await onConnect(provider);            // throws if the repository cannot be read
+    await onConnect(provider);            // throws if nothing at all can be read
     saveConf(conf);
     els.ghToken.value = "";
-    showConnected(conf);
+    if (provider.notes.length) toast(provider.notes[0]);
+    if (!keepScreen) showConnected(conf);
+    return conf;
+  }
+
+  async function add(where) {
+    const next = withRepo(loadConf(), where, pending);
+    const before = loadConf();
+    if (before && next.repos.length === before.repos.length) {
+      toast("이미 연결된 저장소예요.");
+      return before;
+    }
+    return await apply(next);
+  }
+
+  async function remove(where) {
+    const next = withoutRepo(loadConf(), where);
+    if (!next) {                          // the last one: that is a disconnect
+      clearConf();
+      await onConnect(null);
+      showConnected(null);
+      return;
+    }
+    try { await apply(next); }
+    catch (err) { toast(err.message || "저장소를 읽지 못했어요."); }
   }
 
   async function begin() {
@@ -189,12 +320,9 @@ export function githubPanel(els, toast, onConnect) {
     pending = token;
     els.ghConnectBtn.disabled = true;
     try {
-      const repos = await listRepos(token);
-      if (repos.length === 1) {
-        await connect({ token, owner: repos[0].owner, repo: repos[0].repo });
-        return;
-      }
-      if (repos.length > 1) { offer(repos); return; }
+      known = await listRepos(token);
+      if (known.length === 1) { await add(known[0]); return; }
+      if (known.length > 1) { offer(); return; }
       // the token cannot list what it can reach — ask for the one thing missing
       els.ghManualWhy.textContent =
         "토큰으로 저장소를 찾지 못했어요. 주소를 직접 넣어주세요.";
@@ -206,24 +334,42 @@ export function githubPanel(els, toast, onConnect) {
     }
   }
 
-  function offer(repos) {
+  /**
+   * The list of readable repositories, with the connected ones ticked.
+   *
+   * It stays open after a click so several can be added in one pass — the
+   * common case for somebody who just uploaded three series.
+   */
+  function offer() {
+    const conf = loadConf();
+    const on = new Set((conf ? conf.repos : []).map((r) =>
+      (r.owner + "/" + r.repo).toLowerCase()));
     els.ghPickList.innerHTML = "";
-    for (const r of repos) {
+    for (const r of known) {
+      const key = (r.owner + "/" + r.repo).toLowerCase();
       const b = document.createElement("button");
-      b.className = "repo-row";
-      b.textContent = r.full || (r.owner + "/" + r.repo);
+      b.className = "repo-row" + (on.has(key) ? " on" : "");
+      b.textContent = (on.has(key) ? "✓ " : "") + (r.full || (r.owner + "/" + r.repo));
       b.addEventListener("click", async () => {
-        try { await connect({ token: pending, owner: r.owner, repo: r.repo }); }
-        catch (err) { toast(err.message || "연결하지 못했어요."); }
+        b.disabled = true;
+        try {
+          if (on.has(key)) await remove(r); else await add(r);
+          offer();                        // redraw ticks against what is saved now
+        } catch (err) {
+          toast(err.message || "연결하지 못했어요.");
+          b.disabled = false;
+        }
       });
       els.ghPickList.appendChild(b);
     }
+    els.ghPickDone.hidden = !conf;
     screen("pick");
   }
 
   els.ghConnectBtn.addEventListener("click", begin);
   els.ghToken.addEventListener("keydown", (e) => { if (e.key === "Enter") begin(); });
-  els.ghPickBack.addEventListener("click", () => screen("form"));
+  els.ghPickBack.addEventListener("click", () => showConnected(loadConf()));
+  els.ghPickDone.addEventListener("click", () => showConnected(loadConf()));
   // a listing can be incomplete — a repository missing from it is still readable
   // if the token was granted it, so never make the list the only way through
   els.ghPickManual.addEventListener("click", () => {
@@ -234,33 +380,35 @@ export function githubPanel(els, toast, onConnect) {
   els.ghManualBtn.addEventListener("click", async () => {
     const where = parseRepo(els.ghRepo.value);
     if (!where) { toast("사용자명/저장소 형태로 넣어주세요."); return; }
-    try { await connect({ token: pending, ...where }); }
+    try { await add(where); els.ghRepo.value = ""; }
     catch (err) { toast(err.message || "연결하지 못했어요."); }
   });
 
   els.ghReloadBtn.addEventListener("click", async () => {
     const conf = loadConf();
     if (!conf) return;
-    try { await onConnect(createGithubProvider(conf)); }
+    try { await apply(conf, { keepScreen: true }); }
     catch (err) { toast(err.message || "저장소를 읽지 못했어요."); }
   });
 
   /**
-   * Go back to choosing, keeping the token and the downloaded pages.
+   * Add another repository, keeping the token and the downloaded pages.
    *
-   * Picking the wrong repository is easy — an account can hold one named for
-   * the app and another for the comics. Making that mistake cost a disconnect,
-   * which also threw away every page already fetched, so the cheap error had an
-   * expensive undo.
+   * GitHub's size guidance is per repository, so a library that keeps growing
+   * is meant to spread out. Adding must therefore be cheap, and must never cost
+   * the pages already fetched — those are keyed by content hash and stay valid.
    */
-  els.ghSwitchBtn.addEventListener("click", async () => {
+  els.ghAddBtn.addEventListener("click", async () => {
     const conf = loadConf();
     if (!conf) { screen("form"); return; }
     pending = conf.token;
-    els.ghSwitchBtn.disabled = true;
+    els.ghAddBtn.disabled = true;
     try {
-      const repos = await listRepos(conf.token);
-      if (repos.length > 1) offer(repos);
+      known = await listRepos(conf.token);
+      // a list holding nothing new is not a choice — offering it would be a
+      // dead end, and the repository wanted is then one the token cannot list
+      const on = new Set(conf.repos.map((r) => (r.owner + "/" + r.repo).toLowerCase()));
+      if (known.some((r) => !on.has((r.owner + "/" + r.repo).toLowerCase()))) offer();
       else {
         els.ghManualWhy.textContent = "읽을 저장소 주소를 넣어주세요.";
         screen("manual");
@@ -268,7 +416,7 @@ export function githubPanel(els, toast, onConnect) {
     } catch (err) {
       toast(err.message || "저장소 목록을 읽지 못했어요.");
     } finally {
-      els.ghSwitchBtn.disabled = false;
+      els.ghAddBtn.disabled = false;
     }
   });
 

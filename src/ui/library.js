@@ -203,6 +203,9 @@ export function createLibrary(els, openReader, toast) {
 
   // ---------- GitHub ----------
   githubPanel(els, toast, async (provider) => {
+    // dropping the last repository leaves nothing to show — clear rather than
+    // leave a shelf standing for a source that is no longer connected
+    if (!provider) { series = []; current = null; plans.clear(); render(); return; }
     busy("저장소를 읽는 중…");
     // the failure has to reach the panel, not stop here: swallowing it let a
     // rejected token be saved and shown as connected while nothing had loaded

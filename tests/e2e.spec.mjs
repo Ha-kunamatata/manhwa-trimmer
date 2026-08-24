@@ -644,7 +644,7 @@ test("a repository becomes a library, and its pages are read", async ({ page }) 
   await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
   await expect(page.locator("#seriesGrid .series-card")).toHaveCount(2);
   await expect(page.locator("#ghConnected")).toBeVisible();
-  await expect(page.locator("#ghWhere")).toHaveText("someone/my-comics");
+  await expect(page.locator("#ghRepoList")).toContainText("someone/my-comics");
 
   // the token travels as a bearer, and pages are asked for as raw bytes
   const tree = seen.find((r) => r.url.includes("/git/trees/"));
@@ -688,7 +688,92 @@ test("a token that can reach several repositories offers a choice", async ({ pag
   await expect(page.locator("#ghPick")).toBeVisible();
   await expect(page.locator("#ghPickList .repo-row")).toHaveCount(2);
   await page.locator(".repo-row", { hasText: "other-comics" }).click();
-  await expect(page.locator("#ghWhere")).toHaveText("someone/other-comics");
+  // the list stays open so several can be taken in one pass, ticking what is on
+  await expect(page.locator(".repo-row", { hasText: "other-comics" })).toHaveClass(/on/);
+  await page.click("#ghPickDone");
+  await expect(page.locator("#ghRepoList")).toContainText("someone/other-comics");
+});
+
+test("two repositories become one shelf, and either can be dropped", async ({ page }) => {
+  // GitHub's size guidance is per repository, so a growing library spreads out.
+  // Reading it must not: both repositories have to land on the same shelf.
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await page.route("https://api.github.com/**", (route) => {
+    const url = route.request().url();
+    if (url.includes("/user/repos")) {
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: oneRepo(["comics-a", "comics-b"])
+      });
+    }
+    if (url.includes("/git/trees/")) {
+      // each repository holds one series at its root, so only the repository
+      // name tells them apart — the merge has to keep it
+      const one = url.includes("comics-a") ? "원피스" : "나루토";
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ truncated: false, tree: [
+          { path: one + "/001화/p01.png", sha: "s-" + one, type: "blob" }
+        ] })
+      });
+    }
+    return route.fulfill({ status: 404, body: "{}" });
+  });
+  await page.goto("/index.html#/library");
+  await connectRepo(page);
+
+  await page.locator(".repo-row", { hasText: "comics-a" }).click();
+  await expect(page.locator(".repo-row", { hasText: "comics-a" })).toHaveClass(/on/);
+  await page.locator(".repo-row", { hasText: "comics-b" }).click();
+  await page.click("#ghPickDone");
+
+  await expect(page.locator("#ghRepoList .repo-line")).toHaveCount(2);
+  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
+  await expect(page.locator("#seriesGrid .series-card")).toHaveCount(2);
+
+  // dropping one leaves the other standing
+  await page.locator(".repo-line", { hasText: "comics-a" }).locator(".repo-drop").click();
+  await expect(page.locator("#ghRepoList .repo-line")).toHaveCount(1);
+  await expect(page.locator("#seriesGrid .series-card")).toHaveCount(1);
+  expect(errors).toEqual([]);
+});
+
+test("one unreadable repository costs one series, not the library", async ({ page }) => {
+  await page.route("https://api.github.com/**", (route) => {
+    const url = route.request().url();
+    if (url.includes("/user/repos")) {
+      return route.fulfill({
+        status: 200, contentType: "application/json", body: oneRepo(["comics-a", "gone"])
+      });
+    }
+    if (url.includes("/git/trees/")) {
+      if (url.includes("/gone/")) return route.fulfill({ status: 404, body: "{}" });
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ truncated: false, tree: [
+          { path: "원피스/001화/p01.png", sha: "s1", type: "blob" }
+        ] })
+      });
+    }
+    if (url.endsWith("/user")) {
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ login: "someone" })
+      });
+    }
+    return route.fulfill({ status: 404, body: "{}" });
+  });
+  await page.goto("/index.html#/library");
+  await connectRepo(page);
+  await page.locator(".repo-row", { hasText: "comics-a" }).click();
+  await page.locator(".repo-row", { hasText: "gone" }).click();
+  await page.click("#ghPickDone");
+
+  // the failure is named, and what could be read is still on the shelf
+  await expect(page.locator(".toast", { hasText: "someone/gone" })).toBeVisible();
+  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
+  await expect(page.locator("#seriesGrid .series-card")).toHaveCount(1);
 });
 
 test("a token that cannot list repositories asks for the address instead", async ({ page }) => {
@@ -712,7 +797,7 @@ test("a token that cannot list repositories asks for the address instead", async
   // a pasted URL is accepted, not just owner/repo
   await page.fill("#ghRepo", "https://github.com/someone/my-comics");
   await page.click("#ghManualBtn");
-  await expect(page.locator("#ghWhere")).toHaveText("someone/my-comics");
+  await expect(page.locator("#ghRepoList")).toContainText("someone/my-comics");
 });
 
 test("a rejected token says so instead of failing silently", async ({ page }) => {
@@ -848,7 +933,7 @@ test("connecting says what it found, so a wrong repository is obvious", async ({
   await expect(page.locator(".toast")).toContainText("icons");
 
   // and switching away keeps the token instead of forcing a disconnect
-  await page.click("#ghSwitchBtn");
+  await page.click("#ghAddBtn");
   // one reachable repository, so it asks for an address rather than a choice
   await expect(page.locator("#ghManual")).toBeVisible();
   await expect(page.locator("#ghForm")).toBeHidden();
@@ -889,7 +974,7 @@ test("a repository missing from the list can still be typed in", async ({ page }
   await expect(page.locator("#ghManual")).toBeVisible();
   await page.fill("#ghRepo", "someone/manhwa-library");
   await page.click("#ghManualBtn");
-  await expect(page.locator("#ghWhere")).toHaveText("someone/manhwa-library");
+  await expect(page.locator("#ghRepoList")).toContainText("someone/manhwa-library");
 });
 
 test("a badly cut capture can be re-cut from the reader", async ({ page }) => {
