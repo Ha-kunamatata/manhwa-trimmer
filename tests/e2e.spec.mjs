@@ -739,6 +739,45 @@ test("two repositories become one shelf, and either can be dropped", async ({ pa
   expect(errors).toEqual([]);
 });
 
+test("a series split across two repositories reads as one", async ({ page }) => {
+  // 500 chapters do not have to sit in one repository. When they do not, the
+  // shelf must not show the same series twice — the split is a storage detail.
+  const png = makePng(300, 900, ({ rect }) => rect(0, 0, 300, 900, [70, 70, 70]));
+  await page.route("https://api.github.com/**", (route) => {
+    const url = route.request().url();
+    if (url.includes("/user/repos")) {
+      return route.fulfill({
+        status: 200, contentType: "application/json", body: oneRepo(["komi-1", "komi-2"])
+      });
+    }
+    if (url.includes("/git/trees/")) {
+      // both halves hold several captures: a folder with only one is a chapter
+      // folder, not a series, and takes a different path through the regroup
+      const half = url.includes("komi-1") ? ["001화", "002화"] : ["300화", "301화"];
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ truncated: false, tree: half.map((n) => (
+          { path: "코미/" + n + ".png", sha: "s-" + n, type: "blob" })) })
+      });
+    }
+    if (url.includes("/git/blobs/")) {
+      return route.fulfill({ status: 200, contentType: "image/png", body: png });
+    }
+    return route.fulfill({ status: 404, body: "{}" });
+  });
+  await page.goto("/index.html#/library");
+  await connectRepo(page);
+  await page.locator(".repo-row", { hasText: "komi-1" }).click();
+  await page.locator(".repo-row", { hasText: "komi-2" }).click();
+  await page.click("#ghPickDone");
+
+  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
+  await expect(page.locator("#seriesGrid .series-card")).toHaveCount(1);
+  await page.locator(".series-card", { hasText: "코미" }).click();
+  // all three chapters, from both repositories, in reading order
+  await expect(page.locator("#chapterList .chapter-row")).toHaveCount(4);
+});
+
 test("one unreadable repository costs one series, not the library", async ({ page }) => {
   await page.route("https://api.github.com/**", (route) => {
     const url = route.request().url();

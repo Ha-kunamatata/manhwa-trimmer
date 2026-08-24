@@ -83,22 +83,26 @@ export function createLibrary(els, openReader, toast) {
    */
   function regroupAsStrips(list) {
     const out = [];
+    // A series can arrive in more than one piece: a long one split across two
+    // repositories comes back as two folders of the same name. Two identical
+    // cards on the shelf would be a worse answer than the split it came from.
+    const put = (name, chapters) => {
+      const had = out.find((s) => s.name === name);
+      if (had) had.chapters = had.chapters.concat(chapters);
+      else out.push({ name, chapters });
+    };
     for (const s of list) {
       const keep = [];
       for (const c of s.chapters) {
         if (c.pages.length <= 1) { keep.push(c); continue; }
-        out.push({
-          name: c.name,
-          chapters: c.pages
-            .map((page) => {
-              const name = page.name.replace(/\.[^.]+$/, "");
-              return { name, number: chapterNumber(name), pages: [page] };
-            })
-            .sort((a, b) => naturalCompare(a.name, b.name))
-        });
+        put(c.name, c.pages.map((page) => {
+          const name = page.name.replace(/\.[^.]+$/, "");
+          return { name, number: chapterNumber(name), pages: [page] };
+        }));
       }
-      if (keep.length) out.push({ name: s.name, chapters: keep });
+      if (keep.length) put(s.name, keep);
     }
+    for (const s of out) s.chapters.sort((a, b) => naturalCompare(a.name, b.name));
     return out.sort((a, b) => naturalCompare(a.name, b.name));
   }
 
