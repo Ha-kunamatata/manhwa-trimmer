@@ -183,6 +183,25 @@ export function gutterScore(bands, y, height) {
 }
 
 /**
+ * The raw thickness of the blank band at `y`.
+ *
+ * Comparing formats needs this rather than `gutterScore`, which saturates. Once
+ * a band is as thick as `ref` the score is 1 and every thicker band looks the
+ * same — so a page gutter and the gap between two panels become indistinguishable
+ * whenever `ref` lands low, and a grid at HALF the true pitch scores exactly as
+ * well as the right one. It then wins the tie-break for being finer, and every
+ * page gets cut in two.
+ *
+ * Thickness keeps discriminating all the way up, which is the whole point: page
+ * breaks really are thicker than panel gaps.
+ */
+export function gutterThickness(bands, y, height) {
+  const t = bands && bands.thick;
+  if (!t || y < 0 || y >= height) return 0;
+  return t[y];
+}
+
+/**
  * Pick the page layout by trying each shape the standard geometry allows.
  *
  * A scan may hold one page or a two-page spread, so the page height is either
@@ -195,79 +214,78 @@ export function autoFit(bx, offset, bands, height) {
   const start = bx.top + offset;
   if (span < 40) return null;
 
-  const cands = [];
+  const cap = Math.max(8, bands.ref * 2);
+  const PHASES = 24;
+  const bestOf = { 1: null, 2: null };
+
   for (const across of [1, 2]) {
     for (const r of RATIOS) {
       const ideal = (bx.width / across) * r;
-      const base = span / ideal;
-      if (base < 0.5) continue;
-      for (const dn of [-1, 0, 1]) {
-        const n = Math.round(base) + dn;
-        if (n < 1 || n > 400) continue;
-        const h = span / n;
-        if (h < ideal * 0.75 || h > ideal * 1.25) continue;   // must honour the geometry it claims
-        let sum = 0;
-        const search = Math.max(2, Math.round(h * 0.03));
-        for (let k = 1; k < n; k++) {
-          const y = Math.round(start + k * h);
-          let best = 0;
-          for (let d = -search; d <= search; d++) best = Math.max(best, gutterScore(bands, y + d, height));
-          sum += best;
+      if (!(ideal > 8) || span / ideal < 0.5) continue;
+
+      // Phase belongs in here, not after the fact. A strip rarely begins with
+      // page one — a header, an advert, a title band — and scoring a format on a
+      // grid that starts in the wrong place scores every format on noise. So the
+      // grid is slid through one page and each format is judged on its best fit.
+      for (let ph = 0; ph < PHASES; ph++) {
+        const phase = (ideal * ph) / PHASES;
+        const usable = span - phase;
+        if (usable < ideal * 0.5) continue;
+
+        for (const dn of [-1, 0, 1]) {
+          const n = Math.round(usable / ideal) + dn;
+          if (n < 1 || n > 400) continue;
+          const h = usable / n;
+          // honour the geometry it claims, and closely. A loose band lets a grid
+          // at twice the pitch pass as a different format, which then competes
+          // with the real one on equal terms.
+          if (h < ideal * 0.85 || h > ideal * 1.15) continue;
+          if (n < 2) continue;
+
+          let sum = 0;
+          const search = Math.max(2, Math.round(h * 0.03));
+          for (let k = 1; k < n; k++) {
+            const y = Math.round(start + phase + k * h);
+            let thick = 0;
+            for (let d = -search; d <= search; d++) {
+              thick = Math.max(thick, gutterThickness(bands, y + d, height));
+            }
+            sum += Math.min(thick, cap);
+          }
+          // mean thickness, discounted by how much of the strip a phase throws
+          // away — skipping half the comic is not a better reading of it
+          const score = (sum / (n - 1)) * (usable / span);
+          const held = bestOf[across];
+          if (!held || score > held.score ||
+              // a grid at TWICE the true pitch lands on every other real gutter
+              // and ties; among genuine ties the finer grid is the real page
+              (score >= held.score * 0.98 && n > held.n)) {
+            bestOf[across] = { n, across, ratio: r, height: h, phase: Math.round(phase), score };
+          }
         }
-        cands.push({ n, across, ratio: r, height: h, score: n > 1 ? sum / (n - 1) : 0 });
       }
     }
   }
-  if (!cands.length) return null;
-  const top = cands.reduce((a, b) => (b.score > a.score ? b : a));
-  // A grid at twice the true pitch lands on margins just as cleanly, so among
-  // equally good fits take the finest — that one is the real page.
-  const tied = cands.filter((c) => c.score >= top.score * 0.95);
-  const best = tied.reduce((a, b) => (b.n > a.n ? b : a));
-  return Object.assign({}, best, findPhase(best, bx, offset, bands, height));
-}
-
-/**
- * Where the grid should start, not just how far apart its lines are.
- *
- * The pitch can be right while every line is wrong, because a strip rarely
- * begins with page one. A site header, an advert, a title band — anything
- * sitting above the first page pushes the whole grid out by its height, and no
- * amount of snapping recovers a phase error of several hundred pixels.
- *
- * Detecting that leading junk directly is a losing game: it is only sometimes
- * coloured, only sometimes thin, and looks like content the rest of the time.
- * The gutters, though, are already measured — so the grid is slid through one
- * whole pitch and parked where its lines sit most squarely in them. Whatever the
- * leading junk turns out to be, the phase that skips it wins on its own merit.
- */
-function findPhase(cand, bx, offset, bands, height) {
-  const pitch = cand.height;
-  if (!(pitch > 8)) return { phase: 0, n: cand.n, score: cand.score };
-  const start = bx.top + offset;
-  const span = bx.height - offset;
-
-  let bestPhase = 0, bestScore = -1, bestN = cand.n;
-  const steps = 48;
-  for (let s = 0; s < steps; s++) {
-    const phase = (pitch * s) / steps;
-    const n = Math.max(1, Math.round((span - phase) / pitch));
-    if (n < 1 || n > 400) continue;
-    const h = (span - phase) / n;
-    let sum = 0;
-    const search = Math.max(2, Math.round(h * 0.03));
-    for (let k = 1; k < n; k++) {
-      const y = Math.round(start + phase + k * h);
-      let hit = 0;
-      for (let d = -search; d <= search; d++) hit = Math.max(hit, gutterScore(bands, y + d, height));
-      sum += hit;
-    }
-    // a phase that throws away most of the strip is not a better reading of it
-    const kept = (span - phase) / span;
-    const score = (n > 1 ? sum / (n - 1) : 0) * kept;
-    if (score > bestScore) { bestScore = score; bestPhase = phase; bestN = n; }
-  }
-  return { phase: Math.round(bestPhase), n: bestN, score: Math.max(cand.score, bestScore) };
+  /*
+   * A spread has to clearly beat reading the same strip as single pages.
+   *
+   * The two readings are not equally costly to get wrong. A spread is cut at
+   * full width while its height is worked out for a half-width page, so choosing
+   * it wrongly produces a slice wider than it is tall — plainly wrong to anyone
+   * looking at it. Reading a real spread as single pages is merely less pretty.
+   * So the spread carries the burden of proof rather than winning on a hair.
+   */
+  const one = bestOf[1], two = bestOf[2];
+  const best = !one ? two : !two ? one
+    : two.score > one.score * 1.15 ? two
+    // the octave rule reaches across the two readings as well: a single-page
+    // grid at twice the true pitch lands on every other gutter of a spread and
+    // ties with it, and among genuine ties the finer grid is the real page
+    : (Math.abs(two.score - one.score) <= one.score * 0.02 && two.n > one.n) ? two
+    : one;
+  if (!best) return null;
+  best.score = clamp(best.score / cap, 0, 1);      // 0..1 for the UI
+  return best;
 }
 
 /**
