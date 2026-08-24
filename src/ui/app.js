@@ -82,6 +82,13 @@ export function initApp() {
   let library = null;
   const reader = createReader($("#reader"), {
     onProgress: (src, page) => { if (library) library.onProgress(src, page); },
+    // a pin can point into a chapter that is not the one being read
+    onJump: async (pin) => {
+      if (!library) return false;
+      const ok = await library.jumpTo(pin);
+      if (!ok) toast("그 만화가 지금 열려 있지 않아요. 폴더를 먼저 골라주세요.");
+      return ok;
+    },
     onClose: () => {
       if (!library) return;
       library.refresh();

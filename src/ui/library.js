@@ -326,6 +326,25 @@ export function createLibrary(els, openReader, toast) {
   }
 
   /**
+   * Open a pinned page, wherever it lives.
+   *
+   * A pin carries the names it was made under, not a handle to anything — the
+   * files behind it may not even be loaded. So the names are looked up in
+   * whatever library is open now, and a pin from a folder that is no longer
+   * loaded politely says so rather than doing nothing.
+   */
+  async function jumpTo(pin) {
+    const s = series.find((x) => x.name === pin.series);
+    if (!s) return false;
+    const i = s.chapters.findIndex((c) => c.name === pin.chapter);
+    if (i < 0) return false;
+    current = s;
+    render();
+    await read(i, pin.page || 0);
+    return true;
+  }
+
+  /**
    * The most recently read thing, for the home screen.
    *
    * Progress is kept per series rather than as one "last read" value, so the
@@ -376,5 +395,5 @@ export function createLibrary(els, openReader, toast) {
     els.pickFolderBtn.textContent = hasFSA ? "폴더 선택" : "폴더 선택 (하위 폴더 포함)";
   })();
 
-  return { onProgress, refresh: render, lastRead, resume };
+  return { onProgress, refresh: render, lastRead, resume, jumpTo };
 }

@@ -657,3 +657,25 @@ test("the request really reaches GitHub and the answer comes back", async ({ pag
   await expect(page.locator("#ghForm")).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("a pin in another chapter opens that chapter", async ({ page }) => {
+  const errors = await openChapter(page);          // 원피스 001화
+  await turnOn(page);
+  await page.click("#rPin");                       // pin 001화 page 2
+  await expect(page.locator("#rPinCount")).toHaveText("1");
+
+  // move to the next chapter and pin there too
+  await page.keyboard.press("Escape");
+  await page.locator(".chapter-row").nth(1).click();
+  await expect(page.locator("#rSub")).toHaveText("002화");
+  await page.click("#rPin");
+  await expect(page.locator("#rPinCount")).toHaveText("2");
+
+  // from 002화, jump back to the pin that lives in 001화
+  await page.click("#rPinList");
+  await expect(page.locator("#rPinPanel")).toBeVisible();
+  await page.locator("#rPinList2 .pin-row .where", { hasText: "001화" }).first().click();
+  await expect(page.locator("#rSub")).toHaveText("001화", { timeout: 30_000 });
+  await expect(page.locator("#rCount")).toContainText("2");
+  expect(errors).toEqual([]);
+});
