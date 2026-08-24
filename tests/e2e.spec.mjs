@@ -891,3 +891,36 @@ test("a repository missing from the list can still be typed in", async ({ page }
   await page.click("#ghManualBtn");
   await expect(page.locator("#ghWhere")).toHaveText("someone/manhwa-library");
 });
+
+test("a badly cut capture can be re-cut from the reader", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+  await page.goto("/index.html#/library");
+  await page.setInputFiles("#folderInput", uncut.root);
+  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
+  await page.locator(".series-card", { hasText: "슬램덩크" }).click();
+  await page.locator(".chapter-row").first().click();
+  await expect(page.locator("#reader")).toBeVisible({ timeout: 30_000 });
+  await forceSingle(page);
+  await expect(page.locator("#rCount")).toHaveText(`1 / ${uncut.pages}`, { timeout: 30_000 });
+
+  // the control only exists for captures the app cut itself
+  await openSettings(page);
+  await expect(page.locator("#rSplitRow")).toBeVisible();
+  await expect(page.locator("#rSplitN")).toHaveText(String(uncut.pages));
+
+  await page.click("#rSplitUp");
+  await expect(page.locator("#rSplitN")).toHaveText(String(uncut.pages + 1));
+  await expect(page.locator("#rCount")).toContainText("/ " + (uncut.pages + 1));
+
+  await page.click("#rSplitAuto");
+  await expect(page.locator("#rSplitN")).toHaveText(String(uncut.pages));
+  expect(errors).toEqual([]);
+});
+
+test("a folder of ready pages offers no re-cutting", async ({ page }) => {
+  await openChapter(page);          // 원피스 001화, already separate images
+  await openSettings(page);
+  await expect(page.locator("#rSplitRow")).toBeHidden();
+});

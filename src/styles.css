@@ -543,6 +543,7 @@
   .rrow{display:flex; align-items:center; justify-content:space-between; gap:14px; padding:5px 0;}
   .rrow > span{font-size:.8rem; color:#b9b5ac;}
   .rseg{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;}
+  .split-n{min-width:3ch; text-align:center; font-size:.85rem;}
   .rnote{margin:10px 0 0; font-size:.72rem; color:#8d8a82; line-height:1.5;}
 
   .rdrawer{

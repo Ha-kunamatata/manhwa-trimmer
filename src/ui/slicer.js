@@ -33,28 +33,49 @@ const idle = () => new Promise((r) => setTimeout(r, 0));
  * already-cut page sitting in the same folder — yields itself, unchanged, so a
  * mixed folder reads correctly without the caller having to sort it out.
  */
-export async function sliceFile(blob, onProgress) {
+export async function measureFile(blob, onProgress) {
   const img = await decodeBlob(blob);
   const w = img.width, h = img.height;
   try {
-    if (!looksLikeStrip(w, h)) return [{ sx: 0, sy: 0, sw: w, sh: h }];
-
+    if (!looksLikeStrip(w, h)) return { w, h, stats: null, box: null };
     const canvas = toCanvas(img);
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     const stats = await analyseStrip(ctx, w, h, { onProgress, yieldFn: idle });
-    const bx = detectBox(stats, w, h);
-    const plan = planPages(stats, bx, h);
-    if (!plan.pages.length) return [{ sx: 0, sy: 0, sw: w, sh: h }];
-    return plan.pages.map((p) => ({
-      sx: bx.left, sy: p.start, sw: bx.width, sh: p.height
-    }));
+    return { w, h, stats, box: detectBox(stats, w, h) };
   } catch (err) {
     // an image too big to measure is still an image; show it whole rather than
     // dropping the chapter on the floor
-    return [{ sx: 0, sy: 0, sw: w, sh: h }];
+    return { w, h, stats: null, box: null };
   } finally {
     if (img.close) img.close();
   }
+}
+
+/**
+ * Rectangles from a measurement, with no image work at all.
+ *
+ * Kept apart from measuring so the page count can be argued with. Automatic
+ * detection is right most of the time and wrong some of the time, and when it is
+ * wrong the reader needs to say "no, twelve pages" and see it immediately —
+ * re-measuring a forty-thousand-pixel capture for every nudge would make that
+ * unusable.
+ */
+export function rectsFrom(m, opts) {
+  if (!m || !m.stats) return [{ sx: 0, sy: 0, sw: m ? m.w : 1, sh: m ? m.h : 1 }];
+  const plan = planPages(m.stats, m.box, m.h, opts || {});
+  if (!plan.pages.length) return [{ sx: 0, sy: 0, sw: m.w, sh: m.h }];
+  return plan.pages.map((p) => ({
+    sx: m.box.left, sy: p.start, sw: m.box.width, sh: p.height
+  }));
+}
+
+/** How many pages the format suggested, before anyone argued with it. */
+export function autoCount(m) {
+  return m && m.stats ? rectsFrom(m).length : 1;
+}
+
+export async function sliceFile(blob, onProgress) {
+  return rectsFrom(await measureFile(blob, onProgress));
 }
 
 /**
@@ -62,14 +83,21 @@ export async function sliceFile(blob, onProgress) {
  * they belong to. `onStep(done, total, name)` reports progress between files.
  */
 export async function sliceChapter(items, onStep) {
-  const pages = [];
+  const measures = [];
   for (let i = 0; i < items.length; i++) {
     if (onStep) onStep(i, items.length, items[i].name);
-    const blob = await items[i].load();
-    const rects = await sliceFile(blob, null);
-    for (const r of rects) pages.push({ file: i, ...r });
+    measures.push(await measureFile(await items[i].load(), null));
   }
   if (onStep) onStep(items.length, items.length, null);
+  return { measures, pages: pagesFrom(measures) };
+}
+
+/** Lay every file's rectangles end to end, tagged with the file they came from. */
+export function pagesFrom(measures, opts) {
+  const pages = [];
+  measures.forEach((m, i) => {
+    for (const r of rectsFrom(m, opts)) pages.push({ file: i, ...r });
+  });
   return pages;
 }
 

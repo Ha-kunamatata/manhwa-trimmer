@@ -50,6 +50,8 @@ export function createReader(root, hooks = {}) {
     pin: $("#rPin"), pinCount: $("#rPinCount"),
     pinListBtn: $("#rPinList"), pinPanel: $("#rPinPanel"),
     pinRows: $("#rPinList2"), pinEmpty: $("#rPinEmpty"), pinClose: $("#rPinClose"),
+    splitRow: $("#rSplitRow"), splitN: $("#rSplitN"), splitNote: $("#rSplitNote"),
+    splitDown: $("#rSplitDown"), splitUp: $("#rSplitUp"), splitAuto: $("#rSplitAuto"),
     thumbBtn: $("#rThumbBtn"), thumbs: $("#rThumbs"),
     thumbGrid: $("#rThumbGrid"), thumbClose: $("#rThumbClose")
   };
@@ -839,6 +841,10 @@ export function createReader(root, hooks = {}) {
     R.cover.hidden = !dbl;
     R.cover.textContent = view.coverAlone ? "표지 단독" : "표지 나란히";
     R.cover.setAttribute("aria-pressed", view.coverAlone ? "true" : "false");
+    const split = view.source && view.source.pageSplit;
+    R.splitRow.hidden = !split;
+    R.splitNote.hidden = !split;
+    if (split) R.splitN.textContent = String(split.current);
     R.anim.textContent = view.animate ? "넘김 켜짐" : "넘김 꺼짐";
     R.anim.setAttribute("aria-pressed", view.animate ? "true" : "false");
     R.mode.textContent = view.mode === "scroll" ? "이어서 스크롤" : "책장 넘기기";
@@ -950,6 +956,35 @@ export function createReader(root, hooks = {}) {
     applyMode(); syncButtons(); savePrefs();
     await render();
   }));
+  /**
+   * Re-cut this chapter into a different number of pages.
+   *
+   * The reading position is kept in proportion rather than by index — asking for
+   * more pages does not move the reader backwards through the same paper, which
+   * is what jumping to the same page number would do.
+   */
+  function resplit(to) {
+    const split = view.source && view.source.pageSplit;
+    if (!split) return;
+    enqueue(async () => {
+      const before = Math.max(1, view.source.count);
+      const at = view.idx / before;
+      const pages = split.set(to(split));
+      view.source.setPages(pages);
+      view.idx = pagesAt(clamp(Math.round(at * pages.length), 0, pages.length - 1))[0];
+      resetZoom();
+      thumbsDirty = true;
+      saveMark();
+      syncButtons();
+      await render();
+      if (!R.thumbs.hidden) buildThumbs();
+      flash(pages.length + "쪽으로 나눴어요.");
+    });
+  }
+  R.splitDown.addEventListener("click", () => resplit((s) => s.current - 1));
+  R.splitUp.addEventListener("click", () => resplit((s) => s.current + 1));
+  R.splitAuto.addEventListener("click", () => resplit((s) => s.auto));
+
   R.full.addEventListener("click", toggleFullscreen);
   R.pin.addEventListener("click", doTogglePin);
 

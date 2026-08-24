@@ -16,7 +16,7 @@
  */
 import { buildLibrary, chapterNumber, naturalCompare } from "../core/naming.js";
 import { imageListSource, slicedSource, decodeBlob } from "./sources.js";
-import { sliceChapter, probeIsStrip } from "./slicer.js";
+import { sliceChapter, pagesFrom, probeIsStrip } from "./slicer.js";
 import { createGithubProvider, githubPanel } from "./github.js";
 
 export function createLibrary(els, openReader, toast) {
@@ -277,18 +277,49 @@ export function createLibrary(els, openReader, toast) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   // ---------- uncut captures ----------
-  /** Rectangles for a chapter's pages, measured once and kept for the session. */
+  /**
+   * A chapter's measurement, and the rectangles that follow from it.
+   *
+   * Measuring is the expensive half and never changes; the rectangles are cheap
+   * and get recomputed whenever somebody disagrees with the automatic page
+   * count. Keeping both is what makes that argument instant.
+   */
+  const chapterKey = (seriesObj, c) => seriesObj.name + "/" + c.name;
+
   async function planFor(seriesObj, c) {
-    const key = seriesObj.name + "/" + c.name;
-    if (plans.has(key)) return plans.get(key);
+    const k = chapterKey(seriesObj, c);
+    if (plans.has(k)) return plans.get(k);
     const total = c.pages.length;
     busy(total > 1 ? "페이지를 찾는 중… (0/" + total + ")" : "페이지를 찾는 중…");
-    const pages = await sliceChapter(c.pages, (done, n) => {
+    const { measures, pages } = await sliceChapter(c.pages, (done, n) => {
       if (n > 1) busy("페이지를 찾는 중… (" + done + "/" + n + ")");
     });
     busy(null);
-    plans.set(key, pages);
-    return pages;
+    const split = loadSplit(k);
+    const entry = { measures, pages: split ? pagesFrom(measures, { pageCount: split }) : pages };
+    plans.set(k, entry);
+    return entry;
+  }
+
+  /**
+   * How many pages this chapter was told to have.
+   *
+   * Automatic detection reads the format off the paper, and on captures whose
+   * pages are separated by promotional strips it can be some way out. Rather
+   * than leave such a chapter unreadable, the count is adjustable — and the
+   * choice is remembered, because a capture is wrong the same way every time.
+   */
+  const SPLIT_KEY = "manhwa-split";
+  function loadSplit(k) {
+    try { return (JSON.parse(localStorage.getItem(SPLIT_KEY) || "{}"))[k] || null; }
+    catch (e) { return null; }
+  }
+  function saveSplit(k, n) {
+    try {
+      const all = JSON.parse(localStorage.getItem(SPLIT_KEY) || "{}");
+      if (n) all[k] = n; else delete all[k];
+      localStorage.setItem(SPLIT_KEY, JSON.stringify(all));
+    } catch (e) {}
   }
 
   function busy(msg) {
@@ -312,10 +343,11 @@ export function createLibrary(els, openReader, toast) {
       ? () => chapterSource(seriesObj, i + 1) : null;
     const prev = i > 0 ? () => chapterSource(seriesObj, i - 1) : null;
 
+    const entry = stripMode ? await planFor(seriesObj, c) : null;
     const src = stripMode
       ? slicedSource({
           id, title: c.name,
-          pages: await planFor(seriesObj, c),
+          pages: entry.pages,
           // the decoded bitmap is handed over as it is. Copying it onto a canvas
           // first would double the memory a capture costs for nothing — drawing
           // takes a bitmap directly, and only measuring needs readable pixels.
@@ -329,6 +361,21 @@ export function createLibrary(els, openReader, toast) {
           nextChapter: next, prevChapter: prev
         });
     src.seriesName = seriesObj.name;
+    if (entry) {
+      const k = chapterKey(seriesObj, c);
+      src.pageSplit = {
+        auto: pagesFrom(entry.measures).length,
+        current: entry.pages.length,
+        set(n) {
+          const want = Math.max(1, Math.min(500, Math.round(n)));
+          const auto = want === this.auto;
+          entry.pages = pagesFrom(entry.measures, auto ? {} : { pageCount: want });
+          saveSplit(k, auto ? null : want);
+          this.current = entry.pages.length;
+          return entry.pages;
+        }
+      };
+    }
     return src;
   }
 

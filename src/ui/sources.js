@@ -104,6 +104,7 @@ export function imageListSource({ id, title, items, decode, nextChapter, prevCha
  */
 export function slicedSource({ id, title, pages, load, nextChapter, prevChapter }) {
   const KEEP = 2;
+  let rects = pages;
   const open = new Map();            // fileIndex -> Promise<drawable>
   const used = [];                   // fileIndex, most recently wanted last
 
@@ -127,9 +128,11 @@ export function slicedSource({ id, title, pages, load, nextChapter, prevChapter 
 
   return {
     id, title,
-    count: pages.length,
+    get count() { return rects.length; },
+    /** Swap in a different cut of the same files; the decoded files stay. */
+    setPages(next) { rects = next; },
     async getPage(i) {
-      const p = pages[i];
+      const p = rects[i];
       if (!p) return null;
       const img = await file(p.file);
       return { img, sx: p.sx, sy: p.sy, sw: p.sw, sh: p.sh };
