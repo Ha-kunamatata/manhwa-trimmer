@@ -21,6 +21,8 @@ import { deflateSync } from "node:zlib";
  * @param {number} [o.topBanner]  height of a coloured ad banner above the comic
  * @param {number} [o.bottomBanner] height of a coloured ad banner below it
  * @param {number[]} [o.colourPages] pages printed in colour (a chapter's cover)
+ * @param {number} [o.topGrayBand] grayscale junk above the first page (a site
+ *   header, or an advert whose colour a re-encode has already thrown away)
  */
 export function makeStats(o) {
   const { width, colLeft, colRight, top, pageHeights, gutter, panels } = o;
@@ -44,6 +46,12 @@ export function makeStats(o) {
     }
   };
   if (o.topBanner) paint(8, 8 + o.topBanner);
+  // inked but not coloured: nothing about it says "advert" except its shape
+  if (o.topGrayBand) {
+    for (let r = 8; r < Math.min(height, 8 + o.topGrayBand); r++) {
+      brightness[r] = 150; variance[r] = 900;
+    }
+  }
   if (o.bottomBanner) paint(height - 8 - o.bottomBanner, height - 8);
 
   const colour = new Set(o.colourPages ?? []);

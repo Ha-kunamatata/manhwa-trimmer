@@ -125,3 +125,38 @@ test("several stacked banners all go, and the cover still does not", () => {
   assert.ok(bx.top >= 340, "both banners should go, top was " + bx.top);
   assert.ok(bx.top <= 440, "the cover must survive, top was " + bx.top);
 });
+
+// ---------- junk above the first page ----------
+
+test("a grayscale band above the comic shifts nothing below it", () => {
+  // the pitch can be right while every line is wrong: anything sitting above
+  // page one pushes the whole grid out by its height, and no amount of snapping
+  // recovers a phase error of several hundred pixels
+  const f = makeStats({
+    width: 900, colLeft: 160, colRight: 740, top: 640,
+    pageHeights: Array(7).fill(820), gutter: 30, panels: 4,
+    topGrayBand: 500
+  });
+  const bx = detectBox(f.stats, 900, f.height);
+  const plan = planPages(f.stats, bx, f.height);
+  assert.ok(plan.fit, "should have fitted a format");
+  plan.cuts.forEach((c, i) => {
+    const near = Math.min(...f.boundaries.map((b) => Math.abs(b - c.y)));
+    assert.ok(near <= 24, `cut ${i} at ${c.y} is ${near}px from any real gutter`);
+  });
+  assert.ok(plan.cuts.length >= f.boundaries.length - 1,
+    `wanted about ${f.boundaries.length} cuts, got ${plan.cuts.length}`);
+});
+
+test("a strip that starts straight in gets no phase shoved into it", () => {
+  const f = makeStats({
+    width: 900, colLeft: 160, colRight: 740, top: 60,
+    pageHeights: Array(8).fill(820), gutter: 30, panels: 4
+  });
+  const bx = detectBox(f.stats, 900, f.height);
+  const plan = planPages(f.stats, bx, f.height);
+  assert.equal(plan.pages.length, 8, "no pages may be eaten by a phantom phase");
+  plan.cuts.forEach((c, i) => {
+    assert.ok(Math.abs(c.y - f.boundaries[i]) <= 20, `cut ${i} drifted to ${c.y}`);
+  });
+});

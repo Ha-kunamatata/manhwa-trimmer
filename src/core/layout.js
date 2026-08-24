@@ -62,8 +62,11 @@ export function planPages(stats, bx, height, opts = {}) {
     pageCount || (fit ? fit.n : Math.max(1, Math.round((bx.height - offset) / pageHeight))),
     1, 500);
 
+  // the fitted phase skips whatever sits above the first page; a hand-set
+  // offset still nudges from there rather than replacing it
+  const from = offset + (fit ? fit.phase || 0 : 0);
   const built = computePages({
-    bx, offset, pageHeight, pageCount: n, bands, height, manualAdds, manualRemoves
+    bx, offset: from, pageHeight, pageCount: n, bands, height, manualAdds, manualRemoves
   });
   return {
     bands, fit, pageHeight,

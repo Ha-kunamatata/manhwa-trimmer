@@ -66,7 +66,11 @@ export function detectColumns({ colInk, colStep, grayRows, width }) {
  */
 export function detectRows({ variance, saturation, height, pageWidth = 0 }) {
   const scan = Math.round(Math.min(height * 0.35, 4000));
-  const chromeMax = pageWidth > 0 ? pageWidth * 0.55 : height * 0.08;
+  // half a page tall. The comparison has to be against the page's HEIGHT, not
+  // its width — a banner is judged by how much of a page it could be, and
+  // measuring it against the width let a 434px banner survive above a 1013px
+  // page, which shifted every cut below it by that much.
+  const chromeMax = pageWidth > 0 ? pageWidth * 1.414 * 0.5 : height * 0.08;
 
   let top = edgeChrome({ variance, saturation }, 0, 1, scan, chromeMax);
   let bottom = edgeChrome({ variance, saturation }, height - 1, -1, scan, chromeMax);
@@ -219,7 +223,51 @@ export function autoFit(bx, offset, bands, height) {
   // A grid at twice the true pitch lands on margins just as cleanly, so among
   // equally good fits take the finest — that one is the real page.
   const tied = cands.filter((c) => c.score >= top.score * 0.95);
-  return tied.reduce((a, b) => (b.n > a.n ? b : a));
+  const best = tied.reduce((a, b) => (b.n > a.n ? b : a));
+  return Object.assign({}, best, findPhase(best, bx, offset, bands, height));
+}
+
+/**
+ * Where the grid should start, not just how far apart its lines are.
+ *
+ * The pitch can be right while every line is wrong, because a strip rarely
+ * begins with page one. A site header, an advert, a title band — anything
+ * sitting above the first page pushes the whole grid out by its height, and no
+ * amount of snapping recovers a phase error of several hundred pixels.
+ *
+ * Detecting that leading junk directly is a losing game: it is only sometimes
+ * coloured, only sometimes thin, and looks like content the rest of the time.
+ * The gutters, though, are already measured — so the grid is slid through one
+ * whole pitch and parked where its lines sit most squarely in them. Whatever the
+ * leading junk turns out to be, the phase that skips it wins on its own merit.
+ */
+function findPhase(cand, bx, offset, bands, height) {
+  const pitch = cand.height;
+  if (!(pitch > 8)) return { phase: 0, n: cand.n, score: cand.score };
+  const start = bx.top + offset;
+  const span = bx.height - offset;
+
+  let bestPhase = 0, bestScore = -1, bestN = cand.n;
+  const steps = 48;
+  for (let s = 0; s < steps; s++) {
+    const phase = (pitch * s) / steps;
+    const n = Math.max(1, Math.round((span - phase) / pitch));
+    if (n < 1 || n > 400) continue;
+    const h = (span - phase) / n;
+    let sum = 0;
+    const search = Math.max(2, Math.round(h * 0.03));
+    for (let k = 1; k < n; k++) {
+      const y = Math.round(start + phase + k * h);
+      let hit = 0;
+      for (let d = -search; d <= search; d++) hit = Math.max(hit, gutterScore(bands, y + d, height));
+      sum += hit;
+    }
+    // a phase that throws away most of the strip is not a better reading of it
+    const kept = (span - phase) / span;
+    const score = (n > 1 ? sum / (n - 1) : 0) * kept;
+    if (score > bestScore) { bestScore = score; bestPhase = phase; bestN = n; }
+  }
+  return { phase: Math.round(bestPhase), n: bestN, score: Math.max(cand.score, bestScore) };
 }
 
 /**
