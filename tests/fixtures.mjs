@@ -23,6 +23,8 @@ import { deflateSync } from "node:zlib";
  * @param {number[]} [o.colourPages] pages printed in colour (a chapter's cover)
  * @param {number} [o.topGrayBand] grayscale junk above the first page (a site
  *   header, or an advert whose colour a re-encode has already thrown away)
+ * @param {number} [o.tailFurniture] rows of site furniture below the last page —
+ *   comment rows and thin rules: not blank, but far quieter than artwork
  */
 export function makeStats(o) {
   const { width, colLeft, colRight, top, pageHeights, gutter, panels } = o;
@@ -42,14 +44,14 @@ export function makeStats(o) {
     for (let r = Math.max(0, a); r < Math.min(height, b); r++) {
       saturation[r] = 60;
       brightness[r] = 120;
-      variance[r] = 1200;
+      variance[r] = 8100;
     }
   };
   if (o.topBanner) paint(8, 8 + o.topBanner);
   // inked but not coloured: nothing about it says "advert" except its shape
   if (o.topGrayBand) {
     for (let r = 8; r < Math.min(height, 8 + o.topGrayBand); r++) {
-      brightness[r] = 150; variance[r] = 900;
+      brightness[r] = 150; variance[r] = 8100;
     }
   }
   if (o.bottomBanner) paint(height - 8 - o.bottomBanner, height - 8);
@@ -65,7 +67,10 @@ export function makeStats(o) {
       const b = y + (k + 1) * panelH;
       for (let r = a; r < b && r < height; r++) {
         brightness[r] = 130;                     // inked row
-        variance[r] = 900;
+        // printed artwork swings hard from row to row; the old 900 (a standard
+        // deviation of 30) was quieter than real comic pages and let the fixture
+        // pass for site furniture
+        variance[r] = 8100;
         grayRows++;
         const from = Math.floor(colLeft / colStep);
         const to = Math.ceil(colRight / colStep);
@@ -85,6 +90,14 @@ export function makeStats(o) {
     const from = Math.floor((colRight + 40) / colStep);
     const to = Math.min(nCols, from + Math.ceil(60 / colStep));
     for (let c = from; c < to; c++) colInk[c]++;
+  }
+
+  // painted last: the page loop would otherwise write straight over it
+  if (o.tailFurniture) {
+    // faint rules and small text — inked, but nothing like a printed page
+    for (let r = Math.max(0, height - o.tailFurniture); r < height; r++) {
+      brightness[r] = 246; variance[r] = 120; saturation[r] = 0;
+    }
   }
 
   return {

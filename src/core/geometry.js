@@ -72,13 +72,38 @@ export function detectRows({ variance, saturation, height, pageWidth = 0 }) {
   // page, which shifted every cut below it by that much.
   const chromeMax = pageWidth > 0 ? pageWidth * 1.414 * 0.5 : height * 0.08;
 
-  let top = edgeChrome({ variance, saturation }, 0, 1, scan, chromeMax);
-  let bottom = edgeChrome({ variance, saturation }, height - 1, -1, scan, chromeMax);
-
-  while (top < height - 1 && Math.sqrt(variance[top]) < 6) top++;
-  while (bottom < height - 1 && Math.sqrt(variance[height - 1 - bottom]) < 6) bottom++;
+  const top = quietTrim(variance, 0, 1, height,
+    edgeChrome({ variance, saturation }, 0, 1, scan, chromeMax));
+  const bottom = quietTrim(variance, height - 1, -1, height,
+    edgeChrome({ variance, saturation }, height - 1, -1, scan, chromeMax));
 
   return { top, bottom };
+}
+
+/**
+ * Trim the quiet furniture at one end.
+ *
+ * A capture usually runs past the comic into the site around it — a comment
+ * list, a footer, a promo strip. None of it is blank, so trimming only pure
+ * white leaves it in, and it then becomes a page of its own: a reader turns to
+ * the end of a chapter and finds an advert and some empty comment rows.
+ *
+ * What separates it from artwork is how little happens in each row. Printed
+ * comic pages carry heavy variance; thin rules and small text do not. The trim
+ * is capped so it can only ever take the tail, never a page — being wrong here
+ * should cost a strip of leftover site, not a page of comic.
+ */
+function quietTrim(variance, start, step, height, from) {
+  const QUIET = 34;                       // artwork sits far above this
+  const limit = Math.round(height * 0.12);
+  let d = from;
+  while (d < limit) {
+    const y = start + step * d;
+    if (y < 0 || y >= height) break;
+    if (Math.sqrt(variance[y]) >= QUIET) break;
+    d++;
+  }
+  return d;
 }
 
 /**

@@ -160,3 +160,33 @@ test("a strip that starts straight in gets no phase shoved into it", () => {
     assert.ok(Math.abs(c.y - f.boundaries[i]) <= 20, `cut ${i} drifted to ${c.y}`);
   });
 });
+
+// ---------- the site around the comic ----------
+
+test("comment rows and footers below the comic are trimmed off", () => {
+  // a capture usually runs past the last page into the site. None of it is
+  // blank, so trimming only white leaves it in — and it becomes a page of its
+  // own: turn to the end of a chapter and find an advert and empty comments.
+  const f = makeStats({
+    width: 900, colLeft: 160, colRight: 740, top: 60,
+    pageHeights: Array(6).fill(820), gutter: 30, panels: 4,
+    bottomPad: 460, tailFurniture: 420      // the furniture sits below the comic
+  });
+  const bx = detectBox(f.stats, 900, f.height);
+  assert.ok(f.height - bx.bottom >= 420,
+    `the tail should be gone; only ${f.height - bx.bottom}px was trimmed`);
+  const plan = planPages(f.stats, bx, f.height);
+  assert.equal(plan.pages.length, 6, "the furniture must not become a page");
+});
+
+test("a page is never mistaken for furniture", () => {
+  const f = makeStats({
+    width: 900, colLeft: 160, colRight: 740, top: 60,
+    pageHeights: Array(6).fill(820), gutter: 30, panels: 4, bottomPad: 40
+  });
+  const bx = detectBox(f.stats, 900, f.height);
+  // trimming may take the blank pad, and must stop at the artwork above it
+  assert.ok(f.height - bx.bottom <= 120,
+    `trimmed ${f.height - bx.bottom}px, which reaches into the last page`);
+  assert.equal(planPages(f.stats, bx, f.height).pages.length, 6);
+});
