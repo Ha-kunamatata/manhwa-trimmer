@@ -224,6 +224,12 @@ export function githubPanel(els, toast, onConnect) {
   els.ghConnectBtn.addEventListener("click", begin);
   els.ghToken.addEventListener("keydown", (e) => { if (e.key === "Enter") begin(); });
   els.ghPickBack.addEventListener("click", () => screen("form"));
+  // a listing can be incomplete — a repository missing from it is still readable
+  // if the token was granted it, so never make the list the only way through
+  els.ghPickManual.addEventListener("click", () => {
+    els.ghManualWhy.textContent = "읽을 저장소 주소를 넣어주세요.";
+    screen("manual");
+  });
 
   els.ghManualBtn.addEventListener("click", async () => {
     const where = parseRepo(els.ghRepo.value);

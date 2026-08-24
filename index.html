@@ -214,7 +214,13 @@
         <div id="ghPick" hidden>
           <p class="gh-where">어느 저장소를 읽을까요?</p>
           <div class="repo-list" id="ghPickList"></div>
-          <button class="btn btn-ghost btn-block" id="ghPickBack" style="margin-top:10px;">뒤로</button>
+          <p class="hint">찾는 저장소가 없나요? 토큰에 그 저장소가 포함되지 않은 거예요.
+            <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">토큰 설정</a>에서
+            <strong>Repository access</strong>에 추가하고 다시 연결하세요.</p>
+          <div class="source-actions" style="margin-top:10px;">
+            <button class="btn btn-ghost" id="ghPickManual">주소 직접 넣기</button>
+            <button class="btn btn-ghost" id="ghPickBack">뒤로</button>
+          </div>
         </div>
 
         <div id="ghManual" hidden>

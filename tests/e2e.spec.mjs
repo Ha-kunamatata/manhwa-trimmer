@@ -858,3 +858,36 @@ test("a folder load reports its size too", async ({ page }) => {
   await loadLibrary(page);
   await expect(page.locator(".toast")).toContainText("시리즈");
 });
+
+test("a repository missing from the list can still be typed in", async ({ page }) => {
+  // the token here reaches two repositories, neither of them the one wanted —
+  // the list must not be the only way through
+  await page.route("https://api.github.com/**", (route) => {
+    const url = route.request().url();
+    if (url.includes("/user/repos")) {
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: oneRepo(["manhwa-trimmer", "something-else"])
+      });
+    }
+    if (url.includes("/git/trees/")) {
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ truncated: false, tree: [
+          { path: "코미/001화.png", sha: "s1", type: "blob" }
+        ] })
+      });
+    }
+    return route.fulfill({ status: 404, body: "{}" });
+  });
+  await page.goto("/index.html#/library");
+  await connectRepo(page);
+
+  await expect(page.locator("#ghPick")).toBeVisible();
+  await expect(page.locator("#ghPickList .repo-row")).toHaveCount(2);
+  await page.click("#ghPickManual");
+  await expect(page.locator("#ghManual")).toBeVisible();
+  await page.fill("#ghRepo", "someone/manhwa-library");
+  await page.click("#ghManualBtn");
+  await expect(page.locator("#ghWhere")).toHaveText("someone/manhwa-library");
+});

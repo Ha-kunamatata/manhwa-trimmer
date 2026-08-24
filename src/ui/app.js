@@ -114,7 +114,7 @@ export function initApp() {
     ghToggle: $("#ghToggle"), ghPanel: $("#ghPanel"), ghForm: $("#ghForm"),
     ghConnected: $("#ghConnected"), ghWhere: $("#ghWhere"),
     ghToken: $("#ghToken"), ghConnectBtn: $("#ghConnectBtn"),
-    ghPick: $("#ghPick"), ghPickList: $("#ghPickList"), ghPickBack: $("#ghPickBack"),
+    ghPick: $("#ghPick"), ghPickList: $("#ghPickList"), ghPickBack: $("#ghPickBack"), ghPickManual: $("#ghPickManual"),
     ghManual: $("#ghManual"), ghRepo: $("#ghRepo"),
     ghManualBtn: $("#ghManualBtn"), ghManualWhy: $("#ghManualWhy"),
     ghReloadBtn: $("#ghReloadBtn"), ghSwitchBtn: $("#ghSwitchBtn"),
