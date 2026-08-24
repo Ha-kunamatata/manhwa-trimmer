@@ -348,10 +348,10 @@ test("reading a chapter runs on into the next one", async ({ page }) => {
   await expect(page.locator("#reader")).toBeHidden();
 
   // the library remembers where reading stopped: the chapter is marked here,
-  // and the series carries a 이어보기 badge one level up
+  // and the series carries its progress one level up
   await expect(page.locator(".chapter-row.reading .ch-name")).toHaveText("002화");
   await page.click(".crumb-back");
-  await expect(page.locator(".series-card", { hasText: "원피스" })).toContainText("이어보기");
+  await expect(page.locator(".series-card", { hasText: "원피스" })).toContainText("읽음");
   expect(errors).toEqual([]);
 });
 
@@ -923,4 +923,98 @@ test("a folder of ready pages offers no re-cutting", async ({ page }) => {
   await openChapter(page);          // 원피스 001화, already separate images
   await openSettings(page);
   await expect(page.locator("#rSplitRow")).toBeHidden();
+});
+
+// ---------- the shelf ----------
+
+test("chapters can be searched and filtered by what has been read", async ({ page }) => {
+  const errors = await loadLibrary(page);
+  await page.locator(".series-card", { hasText: "원피스" }).click();
+  await expect(page.locator("#shelfTools")).toBeVisible();
+  await expect(page.locator("#chapterList .chapter-row")).toHaveCount(2);
+
+  // typing a number finds the chapter however it was named
+  await page.fill("#chapSearch", "2");
+  await expect(page.locator("#chapterList .chapter-row")).toHaveCount(1);
+  await expect(page.locator(".chapter-row .ch-name")).toHaveText("002화");
+  await page.fill("#chapSearch", "99");
+  await expect(page.locator("#chapterList")).toContainText("찾지 못했어요");
+  await page.fill("#chapSearch", "");
+
+  // read one chapter to the end
+  await page.locator(".chapter-row").first().click();
+  await expect(page.locator("#reader")).toBeVisible();
+  await forceSingle(page);
+  for (let i = 0; i < lib.pages - 1; i++) await turnOn(page);
+  await expect(page.locator("#rCount")).toHaveText(`${lib.pages} / ${lib.pages}`);
+  await page.keyboard.press("Escape");
+
+  await expect(page.locator(".chapter-row.done .ch-name")).toHaveText("001화");
+  await page.click('.chip[data-status="unread"]');
+  await expect(page.locator("#chapterList .chapter-row")).toHaveCount(1);
+  await expect(page.locator(".chapter-row .ch-name")).toHaveText("002화");
+  await page.click('.chip[data-status="done"]');
+  await expect(page.locator(".chapter-row .ch-name")).toHaveText("001화");
+  expect(errors).toEqual([]);
+});
+
+test("continue opens the first chapter that is not finished", async ({ page }) => {
+  await loadLibrary(page);
+  await page.locator(".series-card", { hasText: "원피스" }).click();
+  await expect(page.locator("#continueBtn")).toContainText("001화");
+
+  await page.locator(".chapter-row").first().click();
+  await forceSingle(page);
+  for (let i = 0; i < lib.pages - 1; i++) await turnOn(page);
+  await page.keyboard.press("Escape");
+
+  // chapter one is finished, so continue now points at chapter two
+  await expect(page.locator("#continueBtn")).toContainText("002화");
+  await page.click("#continueBtn");
+  await expect(page.locator("#rSub")).toHaveText("002화");
+});
+
+test("what has been read survives a reload", async ({ page }) => {
+  await loadLibrary(page);
+  await page.locator(".series-card", { hasText: "원피스" }).click();
+  await page.locator(".chapter-row").first().click();
+  await forceSingle(page);
+  for (let i = 0; i < lib.pages - 1; i++) await turnOn(page);
+  await page.keyboard.press("Escape");
+  // settled before reloading: a reload mid-turn is testing the browser, not this
+  await expect(page.locator(".chapter-row.done .ch-name")).toHaveText("001화");
+
+  await page.reload();
+  await page.setInputFiles("#folderInput", lib.root);
+  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
+  await expect(page.locator(".series-card", { hasText: "원피스" })).toContainText("읽음");
+  await page.locator(".series-card", { hasText: "원피스" }).click();
+  await expect(page.locator(".chapter-row.done .ch-name")).toHaveText("001화");
+});
+
+test("a measured capture is not measured again on the next visit", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await page.goto("/index.html#/library");
+  await page.setInputFiles("#folderInput", uncut.root);
+  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
+  await page.locator(".series-card", { hasText: "슬램덩크" }).click();
+  await page.locator(".chapter-row").first().click();
+  await expect(page.locator("#reader")).toBeVisible({ timeout: 30_000 });
+  await forceSingle(page);
+  await expect(page.locator("#rCount")).toHaveText(`1 / ${uncut.pages}`, { timeout: 30_000 });
+  await page.keyboard.press("Escape");
+
+  const kept = await page.evaluate(() => localStorage.getItem("manhwa-cuts"));
+  expect(kept).toContain("슬램덩크");
+
+  // a fresh page still opens it at the same cut, without measuring again
+  await page.reload();
+  await page.setInputFiles("#folderInput", uncut.root);
+  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
+  await page.locator(".series-card", { hasText: "슬램덩크" }).click();
+  await expect(page.locator(".chapter-row").first()).toContainText(`${uncut.pages}쪽`);
+  await page.locator(".chapter-row").first().click();
+  await expect(page.locator("#rCount")).toHaveText(`1 / ${uncut.pages}`, { timeout: 15_000 });
+  expect(errors).toEqual([]);
 });

@@ -15,6 +15,9 @@
  *   multiple files        iOS Safari, which has neither of the above.
  */
 import { buildLibrary, chapterNumber, naturalCompare } from "../core/naming.js";
+import {
+  noteRead, chapterProgress, seriesProgress, nextUnread, filterChapters, sortSeries
+} from "../core/shelf.js";
 import { imageListSource, slicedSource, decodeBlob } from "./sources.js";
 import { sliceChapter, pagesFrom, probeIsStrip } from "./slicer.js";
 import { createGithubProvider, githubPanel } from "./github.js";
@@ -208,6 +211,19 @@ export function createLibrary(els, openReader, toast) {
   });
 
   // ---------- browsing ----------
+  // ---------- what has been read ----------
+  const SHELF_KEY = "manhwa-shelf";
+  let shelf = loadShelf();
+  function loadShelf() {
+    try { return JSON.parse(localStorage.getItem(SHELF_KEY) || "{}"); } catch (e) { return {}; }
+  }
+  function saveShelf() {
+    try { localStorage.setItem(SHELF_KEY, JSON.stringify(shelf)); } catch (e) {}
+  }
+
+  let filter = { query: "", status: "all" };
+
+  // ---------- browsing ----------
   function render() {
     busy(null);
     els.libEmpty.hidden = series.length > 0;
@@ -215,29 +231,40 @@ export function createLibrary(els, openReader, toast) {
     if (!series.length) return;
 
     els.libSource.textContent = sourceLabel;
-    const progress = allProgress();
+    els.shelfTools.hidden = !current;          // the tools belong to a chapter list
+    if (current) renderChapters(); else renderSeries();
+  }
 
-    if (!current) {
-      els.libCrumbs.innerHTML = "";
-      els.chapterList.hidden = true;
-      els.seriesGrid.hidden = false;
-      els.seriesGrid.innerHTML = "";
-      for (const s of series) {
-        const total = s.chapters.reduce((n, c) => n + c.pages.length, 0);
-        const p = progress[s.name];
-        const card = document.createElement("button");
-        card.className = "card series-card";
-        card.innerHTML =
-          '<span class="series-name"></span>'
-          + '<span class="series-meta mono">' + s.chapters.length + "화 · " + total + "쪽</span>"
-          + (p ? '<span class="series-mark">이어보기 · ' + esc(p.chapter) + " " + (p.page + 1) + "쪽</span>" : "");
-        card.querySelector(".series-name").textContent = s.name;
-        card.addEventListener("click", () => { current = s; render(); });
-        els.seriesGrid.appendChild(card);
+  function renderSeries() {
+    els.libCrumbs.innerHTML = "";
+    els.chapterList.hidden = true;
+    els.seriesGrid.hidden = false;
+    els.seriesGrid.innerHTML = "";
+    for (const s of sortSeries(series, shelf)) {
+      const total = s.chapters.reduce((n, c) => n + c.pages.length, 0);
+      const p = seriesProgress(shelf, s.name, s.chapters);
+      const next = nextUnread(shelf, s.name, s.chapters);
+      const card = document.createElement("button");
+      card.className = "card series-card";
+      card.innerHTML =
+        '<span class="series-name"></span>'
+        + '<span class="series-meta mono">' + s.chapters.length + "화 · " + total + "쪽</span>"
+        + (p.done || p.started
+            ? '<span class="series-mark"></span><span class="series-bar"><i></i></span>'
+            : "");
+      card.querySelector(".series-name").textContent = s.name;
+      if (p.done || p.started) {
+        card.querySelector(".series-mark").textContent =
+          !next ? "다 읽었어요" : p.done + " / " + p.total + "화 읽음 · 다음 " + next.name;
+        card.querySelector(".series-bar i").style.width =
+          Math.round((p.done / Math.max(1, p.total)) * 100) + "%";
       }
-      return;
+      card.addEventListener("click", () => { current = s; filter.query = ""; els.chapSearch.value = ""; render(); });
+      els.seriesGrid.appendChild(card);
     }
+  }
 
+  function renderChapters() {
     els.seriesGrid.hidden = true;
     els.chapterList.hidden = false;
     els.libCrumbs.innerHTML = "";
@@ -251,27 +278,66 @@ export function createLibrary(els, openReader, toast) {
     here.textContent = current.name;
     els.libCrumbs.appendChild(here);
 
-    const p = progress[current.name];
+    const next = nextUnread(shelf, current.name, current.chapters);
+    els.continueBtn.hidden = !next;
+    if (next) els.continueBtn.textContent = next.name + " 이어 읽기";
+
+    const shown = filterChapters(current.chapters, {
+      query: filter.query, status: filter.status, state: shelf, series: current.name
+    });
     els.chapterList.innerHTML = "";
-    current.chapters.forEach((c, i) => {
+    if (!shown.length) {
+      const none = document.createElement("p");
+      none.className = "lib-empty-note";
+      none.textContent = filter.query ? "그런 화를 찾지 못했어요." : "여기 해당하는 화가 없어요.";
+      els.chapterList.appendChild(none);
+      return;
+    }
+
+    for (const c of shown) {
+      const i = current.chapters.indexOf(c);
+      const prog = chapterProgress(shelf, current.name, c.name);
       const row = document.createElement("button");
-      row.className = "chapter-row" + (p && p.chapter === c.name ? " reading" : "");
+      row.className = "chapter-row" + (prog.done ? " done" : "")
+        + (prog.read && !prog.done ? " reading" : "");
       // a capture's page count is unknown until it has been measured, so say
       // what will happen instead of stating a number that is really a file count
-      const known = plans.get(current.name + "/" + c.name);
-      const note = stripMode
-        ? (known ? known.length + "쪽" : "자동 분할")
-        : c.pages.length + "쪽";
-      row.innerHTML = '<span class="ch-name"></span><span class="ch-pages mono">' + note + "</span>";
+      const known = knownCount(current, c);
+      const note = stripMode ? (known ? known + "쪽" : "자동 분할") : c.pages.length + "쪽";
+      row.innerHTML = '<span class="tick"></span><span class="ch-name"></span>'
+        + '<span class="bar"><i></i></span>'
+        + '<span class="ch-pages mono">' + note + "</span>";
+      row.querySelector(".tick").textContent = prog.done ? "✓" : "";
       row.querySelector(".ch-name").textContent =
         c.number != null ? c.name : c.name + " (번호 없음)";
+      row.querySelector(".bar i").style.width = Math.round(prog.ratio * 100) + "%";
+      row.querySelector(".bar").style.visibility = prog.read ? "visible" : "hidden";
       row.addEventListener("click", () => {
-        read(i, p && p.chapter === c.name ? p.page : 0)
+        read(i, prog.done ? 0 : prog.page)
           .catch((err) => { busy(null); toast("이 화를 열지 못했어요."); console.error(err); });
       });
       els.chapterList.appendChild(row);
+    }
+  }
+
+  els.chapSearch.addEventListener("input", () => {
+    filter.query = els.chapSearch.value;
+    if (current) renderChapters();
+  });
+  for (const chip of els.shelfTools.querySelectorAll(".chip")) {
+    chip.addEventListener("click", () => {
+      filter.status = chip.dataset.status;
+      for (const c of els.shelfTools.querySelectorAll(".chip")) c.classList.toggle("on", c === chip);
+      if (current) renderChapters();
     });
   }
+  els.continueBtn.addEventListener("click", () => {
+    const next = nextUnread(shelf, current.name, current.chapters);
+    if (!next) return;
+    const i = current.chapters.indexOf(next);
+    const prog = chapterProgress(shelf, current.name, next.name);
+    read(i, prog.page).catch((err) => { busy(null); toast("이 화를 열지 못했어요."); console.error(err); });
+  });
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -286,9 +352,63 @@ export function createLibrary(els, openReader, toast) {
    */
   const chapterKey = (seriesObj, c) => seriesObj.name + "/" + c.name;
 
+  /**
+   * Rectangles kept between visits.
+   *
+   * Measuring a forty-thousand-pixel capture takes seconds, and the answer never
+   * changes — the file is the same file. Keeping only the rectangles means a
+   * chapter reopens instantly while the pixels stay where they were; the
+   * measurement itself is far too large to hold.
+   *
+   * Keyed by size as well as name so a re-uploaded capture is measured again
+   * rather than read through a stale plan.
+   */
+  const CUTS_KEY = "manhwa-cuts";
+  function loadCuts(k, stamp) {
+    try {
+      const all = JSON.parse(localStorage.getItem(CUTS_KEY) || "{}");
+      const e = all[k];
+      return e && e.stamp === stamp ? e.pages : null;
+    } catch (e) { return null; }
+  }
+  function saveCuts(k, stamp, pages) {
+    try {
+      const all = JSON.parse(localStorage.getItem(CUTS_KEY) || "{}");
+      all[k] = { stamp, pages, at: Date.now() };
+      // a shelf of hundreds would eventually fill the quota; drop the oldest
+      const keys = Object.keys(all);
+      if (keys.length > 400) {
+        keys.sort((a, b) => (all[a].at || 0) - (all[b].at || 0));
+        for (const dead of keys.slice(0, keys.length - 400)) delete all[dead];
+      }
+      localStorage.setItem(CUTS_KEY, JSON.stringify(all));
+    } catch (e) { /* out of room: measuring again is slow, not broken */ }
+  }
+  const stampOf = (c) => c.pages.map((p) => p.name + ":" + (p.size || 0)).join("|");
+
+  /** Pages this chapter is known to hold — from this session or a past one. */
+  function knownCount(seriesObj, c) {
+    const k = chapterKey(seriesObj, c);
+    const here = plans.get(k);
+    if (here) return here.pages.length;
+    const kept = loadCuts(k, stampOf(c));
+    return kept ? kept.length : 0;
+  }
+
   async function planFor(seriesObj, c) {
     const k = chapterKey(seriesObj, c);
     if (plans.has(k)) return plans.get(k);
+
+    const stamp = stampOf(c);
+    const kept = loadCuts(k, stamp);
+    if (kept && kept.length) {
+      // measures are absent, so the page count cannot be argued with until the
+      // chapter has been measured once in this session
+      const entry = { measures: null, pages: kept };
+      plans.set(k, entry);
+      return entry;
+    }
+
     const total = c.pages.length;
     busy(total > 1 ? "페이지를 찾는 중… (0/" + total + ")" : "페이지를 찾는 중…");
     const { measures, pages } = await sliceChapter(c.pages, (done, n) => {
@@ -298,6 +418,7 @@ export function createLibrary(els, openReader, toast) {
     const split = loadSplit(k);
     const entry = { measures, pages: split ? pagesFrom(measures, { pageCount: split }) : pages };
     plans.set(k, entry);
+    saveCuts(k, stamp, entry.pages);
     return entry;
   }
 
@@ -364,13 +485,23 @@ export function createLibrary(els, openReader, toast) {
     if (entry) {
       const k = chapterKey(seriesObj, c);
       src.pageSplit = {
-        auto: pagesFrom(entry.measures).length,
+        auto: entry.measures ? pagesFrom(entry.measures).length : entry.pages.length,
         current: entry.pages.length,
-        set(n) {
+        async set(n) {
           const want = Math.max(1, Math.min(500, Math.round(n)));
+          // a plan read back from storage has no measurement behind it; take one
+          // now so the count can be argued with
+          if (!entry.measures) {
+            busy("페이지를 다시 재는 중…");
+            const fresh = await sliceChapter(c.pages, null);
+            entry.measures = fresh.measures;
+            busy(null);
+            this.auto = pagesFrom(entry.measures).length;
+          }
           const auto = want === this.auto;
           entry.pages = pagesFrom(entry.measures, auto ? {} : { pageCount: want });
           saveSplit(k, auto ? null : want);
+          saveCuts(k, stampOf(c), entry.pages);
           this.current = entry.pages.length;
           return entry.pages;
         }
@@ -387,7 +518,10 @@ export function createLibrary(els, openReader, toast) {
 
   // remember where the reader got to, so 이어보기 knows
   function onProgress(src, page) {
-    if (src && src.seriesName) noteProgress(src.seriesName, src.title, page, src.count);
+    if (!src || !src.seriesName) return;
+    noteProgress(src.seriesName, src.title, page, src.count);
+    shelf = noteRead(shelf, src.seriesName, src.title, page, src.count);
+    saveShelf();
   }
 
   /**

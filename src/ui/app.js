@@ -108,6 +108,7 @@ export function initApp() {
     libEmpty: $("#libEmpty"), libBody: $("#libBody"), libStatus: $("#libStatus"),
     libSource: $("#libSource"), libCrumbs: $("#libCrumbs"),
     seriesGrid: $("#seriesGrid"), chapterList: $("#chapterList"),
+    shelfTools: $("#shelfTools"), chapSearch: $("#chapSearch"), continueBtn: $("#continueBtn"),
     pickFolderBtn: $("#pickFolderBtn"), pickFilesBtn: $("#pickFilesBtn"),
     resumeBtn: $("#resumeBtn"),
     folderInput: $("#folderInput"), filesInput: $("#filesInput"),

@@ -400,6 +400,37 @@
   .crumb-here{font-family:"Noto Serif KR",serif; font-size:1.05rem; font-weight:700;}
   .lib-source{font-size:.75rem; color:var(--ink-faint);}
 
+  .shelf-tools{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;
+  }
+  .shelf-tools input[type="search"]{
+    width:auto; flex:1 1 190px; min-width:150px; font-family:inherit;
+  }
+  .chips{display:flex; gap:6px; flex-wrap:wrap;}
+  .chip{
+    background:transparent; border:1px solid var(--hairline); color:var(--ink-soft);
+    border-radius:999px; padding:6px 13px; font-family:inherit; font-size:.78rem; cursor:pointer;
+  }
+  .chip:hover{border-color:var(--accent); color:var(--ink);}
+  .chip.on{background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600;}
+
+  .chapter-row.done{color:var(--ink-faint);}
+  .chapter-row .tick{flex:none; color:var(--accent); font-size:.9rem; width:1.1em;}
+  .chapter-row .ch-name{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .chapter-row .bar{
+    flex:none; width:44px; height:3px; border-radius:2px; background:var(--hairline);
+    overflow:hidden;
+  }
+  .chapter-row .bar i{display:block; height:100%; background:var(--accent);}
+  .series-card .series-bar{
+    width:100%; height:3px; border-radius:2px; background:var(--hairline);
+    overflow:hidden; margin-top:7px;
+  }
+  .series-card .series-bar i{display:block; height:100%; background:var(--accent);}
+  .lib-empty-note{
+    text-align:center; color:var(--ink-faint); font-size:.85rem; padding:34px 0;
+  }
+
   .series-grid{
     display:grid;
     grid-template-columns:repeat(auto-fill, minmax(190px, 1fr));
@@ -421,7 +452,7 @@
 
   .chapter-list{display:flex; flex-direction:column; gap:1px;}
   .chapter-row{
-    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    display:flex; align-items:center; gap:12px;
     padding:12px 14px; cursor:pointer; text-align:left;
     background:var(--surface); border:1px solid var(--hairline);
     font-family:inherit; color:var(--ink); font-size:.88rem;

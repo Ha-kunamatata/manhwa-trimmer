@@ -923,7 +923,10 @@ export function createReader(root, hooks = {}) {
     if (thumbObserver) { thumbObserver.disconnect(); thumbObserver = null; }
     R.scroll.innerHTML = ""; R.scroll.dataset.for = "";
     if (view.source) view.source.release();
-    if (hooks.onClose) hooks.onClose();
+    // Through the queue: a turn still settling has not recorded its page yet,
+    // and closing on top of it redrew the shelf from state one page behind —
+    // a chapter read to the end came back marked as still being read.
+    if (hooks.onClose) enqueue(async () => { hooks.onClose(); });
   }
 
   // ---------- wiring ----------
@@ -969,7 +972,7 @@ export function createReader(root, hooks = {}) {
     enqueue(async () => {
       const before = Math.max(1, view.source.count);
       const at = view.idx / before;
-      const pages = split.set(to(split));
+      const pages = await split.set(to(split));
       view.source.setPages(pages);
       view.idx = pagesAt(clamp(Math.round(at * pages.length), 0, pages.length - 1))[0];
       resetZoom();

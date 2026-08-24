@@ -1,17 +1,34 @@
 {
-  "name": "만화 재단기",
-  "short_name": "만화 재단기",
-  "description": "길게 캡처한 만화 이미지를 만화책 판형으로 잘라 읽고 저장합니다.",
+  "name": "만화경",
+  "short_name": "만화경",
+  "description": "폴더나 비공개 저장소의 만화를 만화책처럼 읽습니다. 자르지 않은 긴 캡처도 알아서 페이지를 찾습니다.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#f2efe6",
-  "theme_color": "#0f7a8c",
+  "background_color": "#12131a",
+  "theme_color": "#12131a",
   "lang": "ko",
+  "categories": [
+    "books",
+    "entertainment"
+  ],
   "icons": [
-    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "./icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "./icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>만화 재단기</title>
-<meta name="description" content="길게 캡처한 만화 이미지를 만화책 판형으로 잘라 저장하고, 폴더나 저장소의 만화를 만화책처럼 읽습니다.">
-<meta name="theme-color" content="#0f7a8c">
+<title>만화경</title>
+<meta name="description" content="폴더나 비공개 저장소의 만화를 만화책처럼 읽습니다. 자르지 않은 긴 캡처도 알아서 페이지를 찾습니다.">
+<meta name="theme-color" content="#12131a">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icons/icon-192.png">
 <link rel="apple-touch-icon" href="./icons/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="만화 재단기">
+<meta name="apple-mobile-web-app-title" content="만화경">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@500;700&family=Noto+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
@@ -20,15 +20,16 @@
 <div class="app" id="appShell" data-view="home">
   <header class="brand">
     <button class="back-home" id="backHome" hidden title="뷰어로 돌아가기">‹</button>
-    <svg class="mark" width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden="true">
-      <path d="M2 9V2H9" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M28 9V2H21" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M2 21V28H9" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M28 21V28H21" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      <line x1="8" y1="15" x2="22" y2="15" stroke="var(--ink-faint)" stroke-width="1.5" stroke-dasharray="2.5 2.5"/>
+    <!-- the app icon itself: same book, same turning page, same arc -->
+    <svg class="mark" width="32" height="32" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="8" fill="#12131a"/>
+      <rect x="4.8" y="7.7" width="22.4" height="16.6" rx="1.2" fill="#e9e3d6"/>
+      <path d="M 16.0 7.7 L 17.2 7.9 L 18.3 8.1 L 19.3 8.3 L 20.2 8.5 L 21.0 8.7 L 21.8 8.9 L 22.4 9.1 L 22.9 9.3 L 22.9 22.7 L 22.4 22.9 L 21.8 23.1 L 21.0 23.3 L 20.2 23.5 L 19.3 23.7 L 18.3 23.9 L 17.2 24.1 L 16.0 24.3 Z" fill="#128a9e"/>
+      <path d="M 21.0 8.7 L 21.8 8.9 L 22.4 9.1 L 22.9 9.3 L 22.9 22.7 L 22.4 22.9 L 21.8 23.1 L 21.0 23.3 Z" fill="#0c5a68"/>
+      <line x1="16" y1="7.7" x2="16" y2="24.3" stroke="#968f82" stroke-width=".7"/>
     </svg>
     <div>
-      <h1>만화 재단기</h1>
+      <h1>만화경</h1>
       <p id="brandSub">폴더를 골라 만화책처럼 읽습니다</p>
     </div>
     <div class="brand-actions">
@@ -256,6 +257,17 @@
       <div class="lib-head">
         <nav class="crumbs" id="libCrumbs"></nav>
         <span class="lib-source mono" id="libSource"></span>
+      </div>
+
+      <div class="shelf-tools" id="shelfTools" hidden>
+        <input type="search" id="chapSearch" placeholder="화 번호로 찾기" autocomplete="off" aria-label="화 검색">
+        <div class="chips" role="tablist">
+          <button class="chip on" data-status="all">전체</button>
+          <button class="chip" data-status="unread">안 읽음</button>
+          <button class="chip" data-status="reading">읽는 중</button>
+          <button class="chip" data-status="done">다 읽음</button>
+        </div>
+        <button class="btn btn-primary" id="continueBtn" hidden>이어 읽기</button>
       </div>
       <div class="series-grid" id="seriesGrid"></div>
       <div class="chapter-list" id="chapterList" hidden></div>

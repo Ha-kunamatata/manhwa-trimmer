@@ -47,7 +47,7 @@ const body = html
 
 // An artifact is wrapped in its own skeleton at publish time, so emit only
 // <title>, the font link, <style> and the body — no doctype/html/head/body.
-const out = `<title>만화 재단기</title>
+const out = `<title>만화경</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@500;700&family=Noto+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 
 <style>
