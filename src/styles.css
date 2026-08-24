@@ -88,6 +88,11 @@
     font-size:1.2rem; line-height:1; cursor:pointer; padding:0 0 3px;
   }
   .back-home:hover{border-color:var(--accent); color:var(--accent);}
+  .brand-actions{margin-left:auto; display:flex; gap:8px; flex:none;}
+  @media (max-width:600px){
+    .brand-actions .btn{padding:8px 10px;}
+    .brand-actions .btn span{display:none;}
+  }
   .mark{flex:none;}
   .brand h1{
     font-family:"Noto Serif KR", serif;
@@ -343,29 +348,7 @@
   }
   :root[data-theme="dark"] .toast, :root:not([data-theme="light"]) .toast{background:var(--surface-2); color:var(--ink); border:1px solid var(--hairline);}
 
-  /* ---- home ---- */
-  .mode-grid{
-    display:grid;
-    grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
-    gap:16px;
-  }
-  .mode-card{
-    display:flex; flex-direction:column; align-items:flex-start; gap:9px;
-    padding:26px 24px 22px;
-    text-align:left; cursor:pointer;
-    font-family:inherit; color:var(--ink);
-    transition:border-color .15s ease, transform .15s ease;
-  }
-  .mode-card:hover{border-color:var(--accent); transform:translateY(-2px);}
-  .mode-card svg{width:30px; height:30px; color:var(--accent);}
-  .mode-card h2{font-family:"Noto Serif KR",serif; font-size:1.2rem; margin:2px 0 0;}
-  .mode-card p{margin:0; font-size:.85rem; color:var(--ink-soft); line-height:1.55;}
-  .mode-go{margin-top:6px; font-size:.82rem; font-weight:600; color:var(--accent);}
-  .home-note{
-    margin:22px 0 0; text-align:center;
-    font-size:.78rem; color:var(--ink-faint);
-  }
-
+  /* ---- resume ---- */
   .resume-card{
     display:flex; align-items:center; gap:12px; flex-wrap:wrap;
     width:100%; padding:14px 18px; margin-bottom:16px;

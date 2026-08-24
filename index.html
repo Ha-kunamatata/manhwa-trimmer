@@ -19,7 +19,7 @@
 <body>
 <div class="app" id="appShell" data-view="home">
   <header class="brand">
-    <button class="back-home" id="backHome" hidden title="처음 화면으로">‹</button>
+    <button class="back-home" id="backHome" hidden title="뷰어로 돌아가기">‹</button>
     <svg class="mark" width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden="true">
       <path d="M2 9V2H9" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M28 9V2H21" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -29,38 +29,18 @@
     </svg>
     <div>
       <h1>만화 재단기</h1>
-      <p id="brandSub">긴 캡처를 자르고, 만화책처럼 읽습니다</p>
+      <p id="brandSub">폴더를 골라 만화책처럼 읽습니다</p>
     </div>
-  </header>
-
-  <!-- ================= 처음 화면 ================= -->
-  <section id="homeView">
-    <button class="card resume-card" id="resumeCard" hidden>
-      <span class="resume-tag">이어서 읽기</span>
-      <span class="resume-where" id="resumeWhere"></span>
-      <span class="resume-page mono" id="resumePage"></span>
-    </button>
-    <div class="mode-grid">
-      <button class="card mode-card" id="goEdit">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <div class="brand-actions">
+      <button class="btn btn-ghost" id="goEdit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M5 3v13a2 2 0 0 0 2 2h13"/><path d="M19 21V8a2 2 0 0 0-2-2H4"/>
           <line x1="3" y1="11" x2="21" y2="11" stroke-dasharray="2.5 2.5"/>
         </svg>
-        <h2>편집</h2>
-        <p>길게 캡처한 이미지를 만화책 판형으로 재어 낱장으로 자릅니다. PDF 한 파일이나 낱장 이미지로 저장할 수 있어요.</p>
-        <span class="mode-go">이미지 자르기 →</span>
-      </button>
-      <button class="card mode-card" id="goLibrary">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 6.5S9.5 4.5 4 4.5v13C9.5 17.5 12 19.5 12 19.5s2.5-2 8-2v-13c-5.5 0-8 2-8 2z"/><path d="M12 6.5v13"/>
-        </svg>
-        <h2>뷰어</h2>
-        <p>폴더를 고르면 만화책처럼 읽습니다. 잘라둔 낱장은 물론, <strong>아직 자르지 않은 긴 캡처도 알아서 페이지를 찾아</strong> 읽습니다. 한 화가 끝나면 다음 화로 이어집니다.</p>
-        <span class="mode-go">만화 고르기 →</span>
+        <span>이미지 자르기</span>
       </button>
     </div>
-    <p class="home-note">이미지는 기기 밖으로 나가지 않습니다. 전부 브라우저 안에서 처리돼요.</p>
-  </section>
+  </header>
 
   <!-- ================= 편집 ================= -->
   <section id="editView" hidden>
@@ -192,7 +172,13 @@
   </section>
 
   <!-- ================= 뷰어 · 라이브러리 ================= -->
-  <section id="libView" hidden>
+  <section id="libView">
+    <button class="card resume-card" id="resumeCard" hidden>
+      <span class="resume-tag">이어서 읽기</span>
+      <span class="resume-where" id="resumeWhere"></span>
+      <span class="resume-page mono" id="resumePage"></span>
+    </button>
+
     <div class="card panel source-panel">
       <h2>만화 불러오기</h2>
       <div class="source-actions">

@@ -23,8 +23,11 @@ export function detectBox(stats, width, height) {
     colInk: stats.colInk, colStep: stats.colStep,
     grayRows: stats.grayRows, width
   });
+  // the column comes first: how tall a band has to be before it counts as a
+  // page rather than a banner is only meaningful relative to the page's width
   const rows = detectRows({
-    variance: stats.variance, saturation: stats.saturation, height
+    variance: stats.variance, saturation: stats.saturation, height,
+    pageWidth: Math.max(0, cols.right - cols.left)
   });
   return boxFrom(cols.cropLeft, cols.cropRight, rows.top, rows.bottom, width, height);
 }

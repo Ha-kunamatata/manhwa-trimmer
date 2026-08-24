@@ -39,9 +39,41 @@ async function api(conf, url, accept) {
   if (res.status === 401) throw new Error("토큰이 거부됐어요. 다시 발급해 주세요.");
   if (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0")
     throw new Error("GitHub 요청 한도를 다 썼어요. 한 시간 뒤에 다시 시도해 주세요.");
-  if (res.status === 404) throw new Error("저장소나 경로를 찾지 못했어요. 토큰 권한도 확인해 주세요.");
+  if (res.status === 404) throw new Error(await explain404(conf));
   if (!res.ok) throw new Error("GitHub 오류 " + res.status);
   return res;
+}
+
+/**
+ * Say which kind of 404 this is.
+ *
+ * GitHub answers 404 rather than 403 for a repository a token cannot see, so
+ * that a token cannot be used to probe for private repositories. Helpful for
+ * security, useless for setup: a wrong repository name and a token that simply
+ * was not granted this repository look identical, and those are the two mistakes
+ * people actually make.
+ *
+ * Asking who the token belongs to separates them. If that works the token is
+ * fine and the problem is its Repository access; if it does not, the token is.
+ */
+async function explain404(conf) {
+  let who = null;
+  try {
+    const res = await fetch(API + "/user", {
+      headers: { Authorization: "Bearer " + conf.token, Accept: "application/vnd.github+json" }
+    });
+    if (res.ok) who = (await res.json()).login;
+  } catch (e) { /* offline, or blocked — fall through to the vaguer message */ }
+
+  const where = conf.owner + "/" + conf.repo;
+  if (!who) return "저장소를 찾지 못했어요. 소유자와 저장소 이름을 확인해 주세요.";
+  if (who.toLowerCase() !== String(conf.owner).toLowerCase()) {
+    return "토큰은 " + who + " 계정 것인데 " + where + "를 찾고 있어요. "
+      + "소유자 이름이 맞는지, 그 저장소가 토큰에 포함됐는지 확인해 주세요.";
+  }
+  return "토큰은 유효한데 " + where + "에 접근할 수 없어요. 토큰의 "
+    + "Repository access에 이 저장소가 들어 있는지, Permissions의 Contents가 "
+    + "Read-only인지 확인해 주세요.";
 }
 
 /** Fetch a page's bytes, preferring the immutable cache over the network. */

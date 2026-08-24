@@ -93,7 +93,46 @@ function buildUncutTree() {
   return { root, chapters: 2, pages: PAGES };
 }
 
+/**
+ * A chapter that opens on a full-colour cover, under a colour ad banner.
+ *
+ * This is the shape that used to lose its cover: the chrome detector trimmed
+ * down to the last coloured row, and a cover is coloured all the way down.
+ */
+function buildColourCover() {
+  const W = 800, COL_L = 110, COL_R = 690;
+  const TOP = 200, PAGES = 6, PAGE_H = 760, GUT = 34, BOT = 150;
+  const H = TOP + PAGES * PAGE_H + (PAGES - 1) * GUT + BOT;
+  const png = makePng(W, H, ({ rect }) => {
+    rect(0, 0, W, 26, [26, 26, 30]);                        // site header
+    for (let i = 0; i < 6; i++)                             // colour ad banner
+      rect(i * W / 6, 36, (i + 1) * W / 6, TOP - 30, [205 + i * 6, 65 + i * 21, 95 + i * 24]);
+    let y = TOP;
+    for (let p = 0; p < PAGES; p++) {
+      if (p === 0) {
+        // the cover: saturated over its whole height, like real cover art
+        rect(COL_L + 4, y + 4, COL_R - 4, y + PAGE_H - 6, [198, 74, 96]);
+        rect(COL_L + 60, y + 120, COL_R - 60, y + 430, [64, 128, 196]);
+        rect(COL_L + 40, y + 470, COL_R - 40, y + PAGE_H - 70, [232, 176, 62]);
+      } else {
+        const panelH = Math.floor(PAGE_H / 4);
+        for (let k = 0; k < 4; k++) {
+          const v = 44 + ((p * 19 + k * 27) % 150);
+          rect(COL_L + 6, y + k * panelH + 6, COL_R - 6, y + (k + 1) * panelH - 2, [v, v, v]);
+        }
+      }
+      y += PAGE_H + GUT;
+    }
+    rect(0, H - 24, W, H, [26, 26, 30]);                    // footer
+  });
+  mkdirSync(FIXTURES, { recursive: true });
+  const file = join(FIXTURES, "cover.png");
+  writeFileSync(file, png);
+  return { file, pages: PAGES, top: TOP };
+}
+
 const strip = buildStrip();
+const cover = buildColourCover();
 const lib = buildLibraryTree();
 const uncut = buildUncutTree();
 
@@ -153,6 +192,21 @@ test("splits the strip into the right number of pages", async ({ page }) => {
   const errors = await load(page);
   await expect(page.locator("#pageGrid .page-card")).toHaveCount(strip.pages);
   await expect(page.locator("#ratioHint")).toContainText("한 페이지 배치");
+  expect(errors).toEqual([]);
+});
+
+test("a colour cover is not mistaken for an advert", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await page.goto("/index.html#/edit");
+  await page.setInputFiles("#fileInput", cover.file);
+  await page.waitForSelector("#results:not([hidden])", { timeout: 30_000 });
+
+  // the banner goes, the cover stays, and the cover counts as a page
+  const top = await page.evaluate(() => +document.querySelector("#cropTop").value);
+  expect(top).toBeGreaterThan(120);            // the banner was trimmed
+  expect(top).toBeLessThanOrEqual(cover.top + 40);  // but the cover was not
+  await expect(page.locator("#pageGrid .page-card")).toHaveCount(cover.pages);
   expect(errors).toEqual([]);
 });
 
@@ -243,21 +297,24 @@ test("no horizontal overflow at any width", async ({ page }) => {
   expect(overflow).toBe(false);
 });
 
-test("the home screen routes to both halves and back", async ({ page }) => {
+test("the app opens on the viewer, with the editor a button away", async ({ page }) => {
   await page.goto("/index.html");
-  await expect(page.locator("#homeView")).toBeVisible();
-  await expect(page.locator("#editView")).toBeHidden();
-
-  await page.click("#goLibrary");
+  // reading is the front door: no landing screen to step through
   await expect(page.locator("#libView")).toBeVisible();
-  expect(page.url()).toContain("#/library");
-
-  await page.click("#backHome");
-  await expect(page.locator("#homeView")).toBeVisible();
+  await expect(page.locator("#editView")).toBeHidden();
+  await expect(page.locator("#pickFolderBtn")).toBeVisible();
+  await expect(page.locator("#goEdit")).toBeVisible();
+  await expect(page.locator("#backHome")).toBeHidden();
 
   await page.click("#goEdit");
   await expect(page.locator("#editView")).toBeVisible();
   await expect(page.locator("#dropzone")).toBeVisible();
+  expect(page.url()).toContain("#/edit");
+  await expect(page.locator("#goEdit")).toBeHidden();
+
+  await page.click("#backHome");
+  await expect(page.locator("#libView")).toBeVisible();
+  await expect(page.locator("#editView")).toBeHidden();
 });
 
 test("a folder becomes series and chapters", async ({ page }) => {
@@ -336,8 +393,7 @@ test("the single-file artifact build runs", async ({ page }) => {
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto("/dist/artifact.html");
-  await expect(page.locator("#homeView")).toBeVisible();
-  await page.click("#goLibrary");
+  await expect(page.locator("#libView")).toBeVisible();
   await expect(page.locator("#libView")).toBeVisible();
   // nothing in an artifact can reach GitHub, so that door is not shown
   await expect(page.locator("#ghToggle")).toBeHidden();
@@ -478,7 +534,6 @@ test("the home screen offers to pick up where reading stopped", async ({ page })
   await expect(page.locator("#rCount")).toHaveText(`2 / ${lib.pages}`);
   await page.keyboard.press("Escape");
 
-  await page.click("#backHome");
   await expect(page.locator("#resumeCard")).toBeVisible();
   await expect(page.locator("#resumeWhere")).toHaveText("원피스 · 001화");
   await expect(page.locator("#resumePage")).toContainText("2");
@@ -678,4 +733,47 @@ test("a pin in another chapter opens that chapter", async ({ page }) => {
   await expect(page.locator("#rSub")).toHaveText("001화", { timeout: 30_000 });
   await expect(page.locator("#rCount")).toContainText("2");
   expect(errors).toEqual([]);
+});
+
+test("an under-scoped token is told apart from a wrong repository name", async ({ page }) => {
+  // GitHub hides a repository a token cannot see behind a 404, so the app has to
+  // ask who the token belongs to before it can say what went wrong
+  await page.route("https://api.github.com/**", (route) => {
+    const url = route.request().url();
+    if (url.endsWith("/user")) {
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ login: "someone" })
+      });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+  });
+  await page.goto("/index.html#/library");
+  await connectRepo(page);
+  await expect(page.locator(".toast")).toContainText("Repository access");
+  await expect(page.locator("#ghForm")).toBeVisible();
+});
+
+test("a token belonging to someone else says whose it is", async ({ page }) => {
+  await page.route("https://api.github.com/**", (route) => {
+    const url = route.request().url();
+    if (url.endsWith("/user")) {
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ login: "other-person" })
+      });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+  });
+  await page.goto("/index.html#/library");
+  await connectRepo(page);
+  await expect(page.locator(".toast")).toContainText("other-person");
+});
+
+test("a bad name with a dead token falls back to the plain message", async ({ page }) => {
+  await page.route("https://api.github.com/**", (route) =>
+    route.fulfill({ status: 404, contentType: "application/json", body: "{}" }));
+  await page.goto("/index.html#/library");
+  await connectRepo(page);
+  await expect(page.locator(".toast")).toContainText("저장소 이름을 확인");
 });

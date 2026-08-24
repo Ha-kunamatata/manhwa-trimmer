@@ -18,6 +18,9 @@ import { deflateSync } from "node:zlib";
  * @param {number} o.panels       panels per page (thin gaps between them)
  * @param {number} [o.bottomPad]  blank rows after the last page
  * @param {number[]} [o.sideButtons] rows occupied by floating buttons right of the page
+ * @param {number} [o.topBanner]  height of a coloured ad banner above the comic
+ * @param {number} [o.bottomBanner] height of a coloured ad banner below it
+ * @param {number[]} [o.colourPages] pages printed in colour (a chapter's cover)
  */
 export function makeStats(o) {
   const { width, colLeft, colRight, top, pageHeights, gutter, panels } = o;
@@ -32,6 +35,18 @@ export function makeStats(o) {
   const colInk = new Int32Array(nCols);
   let grayRows = 0;
 
+  // a coloured band: saturated and inked, the way an ad banner reads
+  const paint = (a, b) => {
+    for (let r = Math.max(0, a); r < Math.min(height, b); r++) {
+      saturation[r] = 60;
+      brightness[r] = 120;
+      variance[r] = 1200;
+    }
+  };
+  if (o.topBanner) paint(8, 8 + o.topBanner);
+  if (o.bottomBanner) paint(height - 8 - o.bottomBanner, height - 8);
+
+  const colour = new Set(o.colourPages ?? []);
   const boundaries = [];
   let y = top;
   for (let p = 0; p < pageHeights.length; p++) {
@@ -49,6 +64,9 @@ export function makeStats(o) {
         for (let c = from; c < to && c < nCols; c++) colInk[c]++;
       }
     }
+    // a colour page is saturated across its whole height — which is exactly
+    // what used to make the chrome detector eat a chapter's cover
+    if (colour.has(p)) for (let r = y; r < y + ph && r < height; r++) saturation[r] = 60;
     y += ph;
     if (p < pageHeights.length - 1) { boundaries.push(y + gutter / 2); y += gutter; }
   }

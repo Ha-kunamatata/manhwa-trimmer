@@ -48,25 +48,70 @@ export function detectColumns({ colInk, colStep, grayRows, width }) {
 }
 
 /**
- * Find the vertical extent of the comic: skip coloured banners at each end
- * (the comic is grayscale, the ads are not), then trim blank paper.
+ * Find the vertical extent of the comic by trimming site chrome off each end.
+ *
+ * Colour used to be the whole test — the comic is grayscale, the ads are not —
+ * and it ate every chapter that opens on a colour cover. A cover is saturated
+ * for its entire height, so "crop down to the last coloured row" cropped away
+ * the cover itself, which is the one page a reader most wants to see.
+ *
+ * What actually separates them is shape, not colour. A banner is a thin band; a
+ * printed page is a page. So a coloured run is measured, and only the short ones
+ * are chrome. `pageWidth` sets the scale — without it there is no way to say how
+ * tall "thin" is.
+ *
+ * The bias is deliberate: an unusually tall banner survives as content, and that
+ * is the cheaper mistake. A stray ad can be trimmed by hand in the editor; a
+ * cover eaten before it is ever displayed just looks like a missing page.
  */
-export function detectRows({ variance, saturation, height }) {
-  let top = 0, bottom = 0;
-  const scan = Math.min(height * 0.35, 4000);
+export function detectRows({ variance, saturation, height, pageWidth = 0 }) {
+  const scan = Math.round(Math.min(height * 0.35, 4000));
+  const chromeMax = pageWidth > 0 ? pageWidth * 0.55 : height * 0.08;
 
-  let lastTop = -1;
-  for (let y = 0; y < scan; y++) if (saturation[y] > 22) lastTop = y;
-  if (lastTop >= 0) top = Math.min(lastTop + 2, Math.round(height * 0.35));
-
-  let firstBot = -1;
-  for (let y = height - 1; y >= height - scan; y--) if (saturation[y] > 22) firstBot = y;
-  if (firstBot >= 0) bottom = Math.min(height - firstBot + 1, Math.round(height * 0.35));
+  let top = edgeChrome({ variance, saturation }, 0, 1, scan, chromeMax);
+  let bottom = edgeChrome({ variance, saturation }, height - 1, -1, scan, chromeMax);
 
   while (top < height - 1 && Math.sqrt(variance[top]) < 6) top++;
   while (bottom < height - 1 && Math.sqrt(variance[height - 1 - bottom]) < 6) bottom++;
 
   return { top, bottom };
+}
+
+/**
+ * How many rows of site chrome sit at one end of the strip.
+ *
+ * Walks inwards: blank paper is passed over, a short coloured run is stepped
+ * past as a banner, and anything else — grey printed content, or a coloured run
+ * too tall to be a banner — stops the walk.
+ */
+function edgeChrome({ variance, saturation }, start, step, scan, chromeMax) {
+  const coloured = (y) => saturation[y] > 22;
+  const inked = (y) => Math.sqrt(variance[y]) >= 6;
+  const GAP = 14;                 // blank rows tolerated inside one banner
+  let depth = 0;
+
+  while (depth < scan) {
+    const y = start + step * depth;
+    if (!coloured(y)) {
+      if (inked(y)) break;        // grey printed content: the comic starts here
+      depth++;                    // blank margin, keep going
+      continue;
+    }
+    // measure the coloured run this row belongs to. Remembering where colour
+    // was last seen is what keeps the blank tail out of the count — subtracting
+    // the gap afterwards leaves the run a row short and the walk stuck on it.
+    let run = 0, gap = 0, last = -1;
+    while (depth + run < scan) {
+      const yy = start + step * (depth + run);
+      if (coloured(yy)) { gap = 0; last = run; }
+      else if (++gap > GAP) break;
+      run++;
+    }
+    const band = last + 1;
+    if (band <= 0 || band > chromeMax) break;   // a coloured PAGE, not a banner
+    depth += band;
+  }
+  return depth;
 }
 
 /**
