@@ -16,7 +16,7 @@
  */
 import { buildLibrary, chapterNumber, naturalCompare } from "../core/naming.js";
 import { imageListSource, slicedSource, decodeBlob } from "./sources.js";
-import { sliceChapter, probeIsStrip, toCanvas } from "./slicer.js";
+import { sliceChapter, probeIsStrip } from "./slicer.js";
 import { createGithubProvider, githubPanel } from "./github.js";
 
 export function createLibrary(els, openReader, toast) {
@@ -301,7 +301,10 @@ export function createLibrary(els, openReader, toast) {
       ? slicedSource({
           id, title: c.name,
           pages: await planFor(seriesObj, c),
-          load: async (fileIndex) => toCanvas(await decodeBlob(await c.pages[fileIndex].load())),
+          // the decoded bitmap is handed over as it is. Copying it onto a canvas
+          // first would double the memory a capture costs for nothing — drawing
+          // takes a bitmap directly, and only measuring needs readable pixels.
+          load: async (fileIndex) => decodeBlob(await c.pages[fileIndex].load()),
           nextChapter: next, prevChapter: prev
         })
       : imageListSource({
