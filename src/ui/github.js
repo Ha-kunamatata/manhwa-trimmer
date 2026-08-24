@@ -292,25 +292,25 @@ export function githubPanel(els, toast, onConnect) {
     return conf;
   }
 
-  async function add(where) {
+  async function add(where, opts) {
     const next = withRepo(loadConf(), where, pending);
     const before = loadConf();
     if (before && next.repos.length === before.repos.length) {
       toast("이미 연결된 저장소예요.");
       return before;
     }
-    return await apply(next);
+    return await apply(next, opts);
   }
 
-  async function remove(where) {
+  async function remove(where, opts) {
     const next = withoutRepo(loadConf(), where);
     if (!next) {                          // the last one: that is a disconnect
       clearConf();
       await onConnect(null);
-      showConnected(null);
+      if (!(opts && opts.keepScreen)) showConnected(null);
       return;
     }
-    try { await apply(next); }
+    try { await apply(next, opts); }
     catch (err) { toast(err.message || "저장소를 읽지 못했어요."); }
   }
 
@@ -353,7 +353,9 @@ export function githubPanel(els, toast, onConnect) {
       b.addEventListener("click", async () => {
         b.disabled = true;
         try {
-          if (on.has(key)) await remove(r); else await add(r);
+          // stay on the list: this screen is where several are taken in one pass
+          const here = { keepScreen: true };
+          if (on.has(key)) await remove(r, here); else await add(r, here);
           offer();                        // redraw ticks against what is saved now
         } catch (err) {
           toast(err.message || "연결하지 못했어요.");
