@@ -193,33 +193,39 @@
 
       <div class="gh-panel" id="ghPanel" hidden>
         <div id="ghForm">
-          <div class="field two-col">
-            <div>
-              <div class="field-row"><label for="ghOwner">소유자</label></div>
-              <input type="text" id="ghOwner" placeholder="사용자명" autocomplete="off">
-            </div>
-            <div>
-              <div class="field-row"><label for="ghRepo">저장소</label></div>
-              <input type="text" id="ghRepo" placeholder="my-comics" autocomplete="off">
-            </div>
-          </div>
-          <div class="field two-col">
-            <div>
-              <div class="field-row"><label for="ghBranch">브랜치</label></div>
-              <input type="text" id="ghBranch" placeholder="main" autocomplete="off">
-            </div>
-            <div>
-              <div class="field-row"><label for="ghPath">하위 경로</label></div>
-              <input type="text" id="ghPath" placeholder="(전체)" autocomplete="off">
-            </div>
-          </div>
           <div class="field">
             <div class="field-row"><label for="ghToken">액세스 토큰</label></div>
-            <input type="password" id="ghToken" placeholder="github_pat_…" autocomplete="off">
+            <input type="password" id="ghToken" placeholder="github_pat_… 붙여넣기" autocomplete="off">
           </div>
-          <p class="hint">저장소 하나에 <strong>Contents: Read-only</strong> 권한만 준 fine-grained 토큰을 쓰세요. 토큰은 이 기기의 브라우저 저장소에만 남고 GitHub 외에는 어디로도 전송되지 않지만, 브라우저에 남는 자격 증명이라는 점은 알아두셔야 해요.</p>
-          <button class="btn btn-primary btn-block" id="ghConnectBtn" style="margin-top:10px;">연결</button>
+          <button class="btn btn-primary btn-block" id="ghConnectBtn">연결</button>
+          <p class="hint">토큰만 넣으면 읽을 수 있는 저장소를 알아서 찾습니다. 토큰은 이 기기의 브라우저에만 남고 GitHub 외에는 어디로도 가지 않아요.</p>
+          <details class="gh-help">
+            <summary>토큰은 어떻게 만드나요?</summary>
+            <ol>
+              <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">토큰 만들기 화면</a>을 엽니다</li>
+              <li><strong>Repository access</strong> → <em>Only select repositories</em> → 만화가 든 저장소를 고릅니다</li>
+              <li><strong>Permissions → Contents</strong> → <em>Read-only</em></li>
+              <li>맨 아래 <strong>Generate token</strong> → 나온 값을 위에 붙여넣습니다</li>
+            </ol>
+            <p class="hint">그 저장소를 읽는 것 말고는 아무것도 할 수 없는 토큰입니다.</p>
+          </details>
         </div>
+
+        <div id="ghPick" hidden>
+          <p class="gh-where">어느 저장소를 읽을까요?</p>
+          <div class="repo-list" id="ghPickList"></div>
+          <button class="btn btn-ghost btn-block" id="ghPickBack" style="margin-top:10px;">뒤로</button>
+        </div>
+
+        <div id="ghManual" hidden>
+          <div class="field">
+            <div class="field-row"><label for="ghRepo">저장소 주소</label></div>
+            <input type="text" id="ghRepo" placeholder="사용자명/저장소  또는  github.com 주소" autocomplete="off">
+          </div>
+          <button class="btn btn-primary btn-block" id="ghManualBtn">연결</button>
+          <p class="hint" id="ghManualWhy"></p>
+        </div>
+
         <div id="ghConnected" hidden>
           <p class="gh-where">연결됨 · <span class="mono" id="ghWhere"></span></p>
           <div class="source-actions">

@@ -581,6 +581,9 @@ function fakeRepo(page, { files, onRequest }) {
     const url = req.url();
     if (onRequest) onRequest({ url, headers: req.headers() });
 
+    if (url.includes("/user/repos")) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: oneRepo() });
+    }
     if (url.includes("/git/trees/")) {
       return route.fulfill({
         status: 200,
@@ -606,13 +609,19 @@ function fakeRepo(page, { files, onRequest }) {
   });
 }
 
+/** Connecting is one field now: paste the token, the repository is found. */
 async function connectRepo(page, token = "github_pat_test") {
   await page.click("#ghToggle");
   await expect(page.locator("#ghPanel")).toBeVisible();
-  await page.fill("#ghOwner", "someone");
-  await page.fill("#ghRepo", "my-comics");
   await page.fill("#ghToken", token);
   await page.click("#ghConnectBtn");
+}
+
+/** Answer /user/repos so the token resolves to `someone/my-comics`. */
+function oneRepo(names = ["my-comics"]) {
+  return JSON.stringify(names.map((n) => ({
+    name: n, full_name: "someone/" + n, owner: { login: "someone" }
+  })));
 }
 
 test("a repository becomes a library, and its pages are read", async ({ page }) => {
@@ -654,20 +663,56 @@ test("a repository becomes a library, and its pages are read", async ({ page }) 
   expect(errors).toEqual([]);
 });
 
-test("a scoped path keeps the folder it names", async ({ page }) => {
-  await fakeRepo(page, { files: ["comics/원피스/001화/p01.png", "other/junk.png"] });
+test("a token that can reach several repositories offers a choice", async ({ page }) => {
+  await page.route("https://api.github.com/**", (route) => {
+    const url = route.request().url();
+    if (url.includes("/user/repos")) {
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: oneRepo(["my-comics", "other-comics"])
+      });
+    }
+    if (url.includes("/git/trees/")) {
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ truncated: false, tree: [
+          { path: "원피스/001화/p01.png", sha: "s1", type: "blob" }
+        ] })
+      });
+    }
+    return route.fulfill({ status: 404, body: "{}" });
+  });
   await page.goto("/index.html#/library");
-  await page.click("#ghToggle");
-  await page.fill("#ghOwner", "someone");
-  await page.fill("#ghRepo", "my-comics");
-  await page.fill("#ghPath", "comics/원피스");
-  await page.fill("#ghToken", "t");
-  await page.click("#ghConnectBtn");
+  await connectRepo(page);
 
-  await page.waitForSelector("#libBody:not([hidden])", { timeout: 30_000 });
-  // scoping to a series folder must not lose that folder's name
-  await expect(page.locator("#seriesGrid .series-card")).toHaveCount(1);
-  await expect(page.locator(".series-card .series-name")).toHaveText("원피스");
+  await expect(page.locator("#ghPick")).toBeVisible();
+  await expect(page.locator("#ghPickList .repo-row")).toHaveCount(2);
+  await page.locator(".repo-row", { hasText: "other-comics" }).click();
+  await expect(page.locator("#ghWhere")).toHaveText("someone/other-comics");
+});
+
+test("a token that cannot list repositories asks for the address instead", async ({ page }) => {
+  await page.route("https://api.github.com/**", (route) => {
+    const url = route.request().url();
+    if (url.includes("/user/repos")) return route.fulfill({ status: 403, body: "[]" });
+    if (url.includes("/git/trees/")) {
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ truncated: false, tree: [
+          { path: "원피스/001화/p01.png", sha: "s1", type: "blob" }
+        ] })
+      });
+    }
+    return route.fulfill({ status: 404, body: "{}" });
+  });
+  await page.goto("/index.html#/library");
+  await connectRepo(page);
+
+  await expect(page.locator("#ghManual")).toBeVisible();
+  // a pasted URL is accepted, not just owner/repo
+  await page.fill("#ghRepo", "https://github.com/someone/my-comics");
+  await page.click("#ghManualBtn");
+  await expect(page.locator("#ghWhere")).toHaveText("someone/my-comics");
 });
 
 test("a rejected token says so instead of failing silently", async ({ page }) => {
@@ -680,11 +725,15 @@ test("a rejected token says so instead of failing silently", async ({ page }) =>
 });
 
 test("a repository too big to list says what to do about it", async ({ page }) => {
-  await page.route("https://api.github.com/**", (route) =>
-    route.fulfill({
+  await page.route("https://api.github.com/**", (route) => {
+    if (route.request().url().includes("/user/repos")) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: oneRepo() });
+    }
+    return route.fulfill({
       status: 200, contentType: "application/json",
       body: JSON.stringify({ truncated: true, tree: [] })
-    }));
+    });
+  });
   await page.goto("/index.html#/library");
   await connectRepo(page);
   await expect(page.locator(".toast")).toContainText("하위 경로");
@@ -740,6 +789,9 @@ test("an under-scoped token is told apart from a wrong repository name", async (
   // ask who the token belongs to before it can say what went wrong
   await page.route("https://api.github.com/**", (route) => {
     const url = route.request().url();
+    if (url.includes("/user/repos")) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: oneRepo() });
+    }
     if (url.endsWith("/user")) {
       return route.fulfill({
         status: 200, contentType: "application/json",
@@ -757,6 +809,9 @@ test("an under-scoped token is told apart from a wrong repository name", async (
 test("a token belonging to someone else says whose it is", async ({ page }) => {
   await page.route("https://api.github.com/**", (route) => {
     const url = route.request().url();
+    if (url.includes("/user/repos")) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: oneRepo() });
+    }
     if (url.endsWith("/user")) {
       return route.fulfill({
         status: 200, contentType: "application/json",
@@ -771,8 +826,12 @@ test("a token belonging to someone else says whose it is", async ({ page }) => {
 });
 
 test("a bad name with a dead token falls back to the plain message", async ({ page }) => {
-  await page.route("https://api.github.com/**", (route) =>
-    route.fulfill({ status: 404, contentType: "application/json", body: "{}" }));
+  await page.route("https://api.github.com/**", (route) => {
+    if (route.request().url().includes("/user/repos")) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: oneRepo() });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+  });
   await page.goto("/index.html#/library");
   await connectRepo(page);
   await expect(page.locator(".toast")).toContainText("저장소 이름을 확인");

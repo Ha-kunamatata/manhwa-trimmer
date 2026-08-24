@@ -113,10 +113,11 @@ export function initApp() {
     folderInput: $("#folderInput"), filesInput: $("#filesInput"),
     ghToggle: $("#ghToggle"), ghPanel: $("#ghPanel"), ghForm: $("#ghForm"),
     ghConnected: $("#ghConnected"), ghWhere: $("#ghWhere"),
-    ghToken: $("#ghToken"), ghOwner: $("#ghOwner"), ghRepo: $("#ghRepo"),
-    ghBranch: $("#ghBranch"), ghPath: $("#ghPath"),
-    ghConnectBtn: $("#ghConnectBtn"), ghReloadBtn: $("#ghReloadBtn"),
-    ghForgetBtn: $("#ghForgetBtn")
+    ghToken: $("#ghToken"), ghConnectBtn: $("#ghConnectBtn"),
+    ghPick: $("#ghPick"), ghPickList: $("#ghPickList"), ghPickBack: $("#ghPickBack"),
+    ghManual: $("#ghManual"), ghRepo: $("#ghRepo"),
+    ghManualBtn: $("#ghManualBtn"), ghManualWhy: $("#ghManualWhy"),
+    ghReloadBtn: $("#ghReloadBtn"), ghForgetBtn: $("#ghForgetBtn")
   }, openReader, toast);
 
   routeFromHash();

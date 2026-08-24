@@ -117,40 +117,119 @@ export function createGithubProvider(conf) {
   };
 }
 
-/** Wire the connect / disconnect panel. Calls `onConnect(provider)` when ready. */
-export function githubPanel(els, toast, onConnect) {
-  const fields = () => ({
-    token: els.ghToken.value.trim(),
-    owner: els.ghOwner.value.trim(),
-    repo: els.ghRepo.value.trim(),
-    branch: els.ghBranch.value.trim(),
-    path: els.ghPath.value.trim()
+/**
+ * Which repositories this token can read.
+ *
+ * A fine-grained token is usually granted exactly one repository, which means
+ * the token already knows where the comics are — asking for an owner and a
+ * repository name on top of it is asking the reader to repeat themselves. When
+ * the answer is a single repository there is nothing left to ask at all.
+ */
+export async function listRepos(token) {
+  const res = await fetch(API + "/user/repos?per_page=100&sort=updated", {
+    headers: {
+      Authorization: "Bearer " + token,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    }
   });
+  if (res.status === 401) throw new Error("토큰이 거부됐어요. 다시 발급해 주세요.");
+  if (!res.ok) return [];                      // older tokens cannot list; ask instead
+  const list = await res.json();
+  return (Array.isArray(list) ? list : [])
+    .map((r) => ({ owner: r.owner && r.owner.login, repo: r.name, full: r.full_name }))
+    .filter((r) => r.owner && r.repo);
+}
 
-  function showConnected(conf) {
-    els.ghForm.hidden = !!conf;
-    els.ghConnected.hidden = !conf;
-    if (conf) els.ghWhere.textContent = createGithubProvider(conf).label;
+/** Accept whatever someone pastes: a full URL, or just `owner/repo`. */
+export function parseRepo(text) {
+  const t = String(text || "").trim().replace(/\.git$/, "");
+  const m = t.match(/github\.com[/:]+([^/\s]+)\/([^/\s?#]+)/i)
+         || t.match(/^([^/\s]+)\/([^/\s?#]+)$/);
+  return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+/**
+ * Wire the connect / disconnect panel.
+ *
+ * One field: the token. Everything the old form asked for is either derivable
+ * (the repository, from what the token can reach) or almost never needed (a
+ * branch other than the default, a sub-folder). Asking for five things to read
+ * one folder of comics was the wrong trade.
+ *
+ * Calls `onConnect(provider)` when there is something to read.
+ */
+export function githubPanel(els, toast, onConnect) {
+  let pending = "";                     // the token being tried, before it is saved
+
+  function screen(which) {
+    els.ghForm.hidden = which !== "form";
+    els.ghPick.hidden = which !== "pick";
+    els.ghManual.hidden = which !== "manual";
+    els.ghConnected.hidden = which !== "connected";
   }
 
-  els.ghConnectBtn.addEventListener("click", async () => {
-    const conf = fields();
-    if (!conf.token || !conf.owner || !conf.repo) {
-      toast("토큰, 소유자, 저장소 이름이 필요해요.");
-      return;
-    }
+  function showConnected(conf) {
+    if (conf) els.ghWhere.textContent = createGithubProvider(conf).label;
+    screen(conf ? "connected" : "form");
+  }
+
+  /** Try one repository; on success remember it and hand it to the library. */
+  async function connect(conf) {
+    const provider = createGithubProvider(conf);
+    await onConnect(provider);            // throws if the repository cannot be read
+    saveConf(conf);
+    els.ghToken.value = "";
+    showConnected(conf);
+  }
+
+  async function begin() {
+    const token = els.ghToken.value.trim();
+    if (!token) { toast("토큰을 붙여넣어 주세요."); return; }
+    pending = token;
     els.ghConnectBtn.disabled = true;
     try {
-      const provider = createGithubProvider(conf);
-      await onConnect(provider);
-      saveConf(conf);
-      showConnected(conf);
-      els.ghToken.value = "";                   // no need to keep it on screen
+      const repos = await listRepos(token);
+      if (repos.length === 1) {
+        await connect({ token, owner: repos[0].owner, repo: repos[0].repo });
+        return;
+      }
+      if (repos.length > 1) { offer(repos); return; }
+      // the token cannot list what it can reach — ask for the one thing missing
+      els.ghManualWhy.textContent =
+        "토큰으로 저장소를 찾지 못했어요. 주소를 직접 넣어주세요.";
+      screen("manual");
     } catch (err) {
       toast(err.message || "연결하지 못했어요.");
     } finally {
       els.ghConnectBtn.disabled = false;
     }
+  }
+
+  function offer(repos) {
+    els.ghPickList.innerHTML = "";
+    for (const r of repos) {
+      const b = document.createElement("button");
+      b.className = "repo-row";
+      b.textContent = r.full || (r.owner + "/" + r.repo);
+      b.addEventListener("click", async () => {
+        try { await connect({ token: pending, owner: r.owner, repo: r.repo }); }
+        catch (err) { toast(err.message || "연결하지 못했어요."); }
+      });
+      els.ghPickList.appendChild(b);
+    }
+    screen("pick");
+  }
+
+  els.ghConnectBtn.addEventListener("click", begin);
+  els.ghToken.addEventListener("keydown", (e) => { if (e.key === "Enter") begin(); });
+  els.ghPickBack.addEventListener("click", () => screen("form"));
+
+  els.ghManualBtn.addEventListener("click", async () => {
+    const where = parseRepo(els.ghRepo.value);
+    if (!where) { toast("사용자명/저장소 형태로 넣어주세요."); return; }
+    try { await connect({ token: pending, ...where }); }
+    catch (err) { toast(err.message || "연결하지 못했어요."); }
   });
 
   els.ghReloadBtn.addEventListener("click", async () => {
